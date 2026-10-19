@@ -1,0 +1,16 @@
+{
+  "name": "cluade-mods",
+  "owner": { "name": "6329ksu-cmyk" },
+  "plugins": [
+    {
+      "name": "memo",
+      "source": "./memo",
+      "description": "입력창 위 메뉴판: 메모(전역·세션·기한), 흐름 요약과 내 질문 바로가기, 세션 칸, ⏱ 사용량 줄"
+    },
+    {
+      "name": "fm",
+      "source": "./firstmate-calm",
+      "description": "Firstmate Calm: 도구 줄을 감추고 작업 중 표시를 돛단배로 (kunchenguid/firstmate, MIT)"
+    }
+  ]
+}

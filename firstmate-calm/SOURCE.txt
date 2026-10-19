@@ -1,0 +1,2 @@
+﻿kunchenguid/firstmate 6407052f4c521e39401ce2305dfa45d201249827 (2026-10-12) .claude/mods/firstmate-calm 원본 그대로 복사 2026-10-13
+로컬 수정 2026-10-14: lib/fm-calm-preservation.ts CALM_PRESERVE_MIN_CHARS 240 -> 0 (AI 중간 글은 감추지 않고 도구 줄만 감춤, 사용자 선택 A)
