@@ -59,10 +59,11 @@ export function calmPreferencePath(env: CalmHomeEnvironment, pluginRoot: string)
 
 /**
  * Whether a stored preference reads as Calm on. `max` is the legacy value of a removed
- * third level whose behavior is now ordinary Calm; absent or unrecognized reads as off.
+ * third level whose behavior is now ordinary Calm; unrecognized reads as off. Absent reads as
+ * on (local change 2026-10-20: a fresh install starts calm without running /calm first).
  */
 export function parseCalmPreference(stored: string | undefined): boolean {
-  if (stored === undefined) return false;
+  if (stored === undefined) return true;
   const value = stored.trim();
   return value === "on" || value === "max";
 }

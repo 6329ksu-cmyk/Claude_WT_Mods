@@ -127,14 +127,10 @@ let notes: NotesState | undefined;
 let notesTimer: { cancel(): void } | undefined;
 let notesPolling = false;
 
-function isActivated($: EngineInterface): Promise<boolean> {
-  if (activation === undefined) {
-    activation = $.env.get("CLAUDE_CODE_ENABLE_FUNCTION_HOOKS").then(
-      (value) => value === "1",
-      () => false,
-    );
-  }
-  return activation;
+// Local change (2026-10-20): installing the mod is the opt-in, so it no longer waits for
+// CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 in settings.
+function isActivated(_$: EngineInterface): Promise<boolean> {
+  return Promise.resolve(true);
 }
 
 // A missing file is checked first because every rejected read or stat is an error in

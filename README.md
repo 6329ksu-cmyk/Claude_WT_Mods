@@ -4,23 +4,17 @@ Claude Code mods 두 개: `memo`(메뉴판)와 `fm`(돛단배).
 
 ## 설치
 
-1. `~/.claude/settings.json`의 `"env"`에 아래 줄을 넣는다. `fm`은 이 값이 정확히 `1`일 때만 동작한다.
+터미널에서 Claude Code를 열고 프롬프트에 친다. `Add marketplace?`에 `y`, 범위는 맨 위 user에서 Enter. 설정 파일은 손대지 않아도 된다.
 
-   ```json
-   "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"
-   ```
+```
+/plugin install memo --marketplace 6329ksu-cmyk/Cluade_Mods
+/plugin install fm --marketplace 6329ksu-cmyk/Cluade_Mods
+```
 
-2. 터미널에서 Claude Code를 열고 프롬프트에 친다. `Add marketplace?`에 `y`, 범위는 맨 위 user에서 Enter.
+셸에서는 `claude plugin install memo --marketplace 6329ksu-cmyk/Cluade_Mods`.
+데스크톱 앱에서는 프롬프트 옆 + → Plugins → Add marketplace에 `6329ksu-cmyk/Cluade_Mods` → Add plugin.
 
-   ```
-   /plugin install memo --marketplace 6329ksu-cmyk/Cluade_Mods
-   /plugin install fm --marketplace 6329ksu-cmyk/Cluade_Mods
-   ```
-
-   셸에서는 `claude plugin install memo --marketplace 6329ksu-cmyk/Cluade_Mods`.
-   데스크톱 앱에서는 프롬프트 옆 + → Plugins → Add marketplace에 `6329ksu-cmyk/Cluade_Mods` → Add plugin.
-
-3. 돛단배는 `/calm`으로 켜고 끈다(처음엔 꺼져 있다).
+돛단배는 설치하면 바로 켜져 있다. `/calm`으로 끄고 켠다.
 
 비공개 저장소면 GitHub에서 초대받은 계정으로 그 PC에 `gh auth login` 뒤 `gh auth setup-git`을 해 둬야 설치된다.
 
