@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement, SessionMessage, SessionRateLimit } from 'claude-code'
 
-import type { DeskRow, Flow, Live, Memo, Meter, Tab } from '../types'
+import type { Brief, Decision, DeskRow, Flow, Live, Memo, Meter, Tab } from '../types'
 
 // 메뉴판: [메모: 전역 | 세션] │ [세션 현황] │ [흐름]. 칸을 누르면 메뉴판 아래에 그 목록이 펼쳐진다
 // 기한 칸·선택지 칸은 2026-10-12에 뺐다(사용자: 어느 세션이 묻는지 모르겠고 쓸모없음). 기한 메모는 전역 칸 맨 위에 D-day로,
@@ -26,9 +26,14 @@ const peers = atom({ plugin: 'memo', key: 'peers' } as const, [] as Live[])
 // 흐름 칸 아래 '내 질문': 이 세션에서 사용자가 보낸 말(오래된 것부터)
 const asked = atom({ plugin: 'memo', key: 'asked' } as const, [] as string[])
 const showAsked = atom({ plugin: 'memo', key: 'showAsked' } as const, false)
+// 결정 카드 [왜? 앞뒤]: 앞 흐름·고르면 생기는 일·추천 이유까지 펼침
+const whyOpen = atom({ plugin: 'memo', key: 'whyOpen' } as const, false)
+const brief = atom({ plugin: 'memo', key: 'brief' } as const, null as Brief | null)
 const KEEP_DONE = 3
 // 상태 파일이 이만큼 안 바뀌면(1분마다 다시 쓴다) 꺼진 세션으로 본다
 const LIVE_STALE = 3 * 60_000
+// 어느 탭에서도 이만큼 아무것도 안 보내면 자리 비운 것으로 보고 돌아오면 브리핑을 띄운다
+const AWAY = 15 * 60_000
 const ASKED_SHORT = 5
 const ASKED_LONG = 15
 // 파일의 해결 목록은 모든 세션 것을 합쳐 최근 50개만
@@ -39,6 +44,8 @@ const MORE_HOURS = 72
 // 세션 칸은 한 줄 모양 그대로 열 위치만 맞춘다(2026-10-13 사용자: 행·열이 제각각, 머리줄 있는 표는 불편).
 // 버튼은 터미널에서 [ 글자 ]로 그려져 글자 칸+4: [끝][킵·풀기][열기] 자리를 늘 같은 폭으로 비워 둬 글이 같은 칸에서 시작한다
 const BTN = { end: 6, keep: 8, open: 8 } as const
+// 결정 카드 [왜? 앞뒤] 자리(글자 8칸+4). 둘째 결정부터는 비워 둬 ❓가 같은 칸에서 시작한다
+const WHY_W = 12
 const NAME_MAX = 28
 // 화면 칸 수: 한글·한자·넓은 기호(⏳)는 두 칸, 나머지는 한 칸
 const wide = (c: number) =>
@@ -231,6 +238,16 @@ const digest = (msgs: readonly SessionMessage[]) => {
   return all.length <= 36_000 ? all : `${all.slice(0, 6_000)}\n…(중간 생략)…\n${all.slice(-30_000)}`
 }
 
+// 결정 카드 재료: 흐름 요약과 같은 Haiku 호출에서 함께 뽑는다(호출을 더 하지 않는다)
+const DECISIONS_SHAPE = `[{"ask": "고를 것(30자 이내)", "why": "왜 지금 이 결정이 나왔는지: 앞에서 무엇을 하다 생긴 일인지(60자 이내)",
+   "options": [{"key": "A나 1처럼 AI가 쓴 선택지 이름", "label": "그 선택지의 뜻(25자 이내)", "then": "고르면 다음에 생기는 일(45자 이내)"}],
+   "pick": "AI가 추천한 key(없으면 빈 문자열)", "reason": "추천 이유(45자 이내, 없으면 빈 문자열)"}]`
+const DECISIONS_RULE =
+  // 10-20: "결정 1. ~ 추천해요"처럼 A·B 없이 추천만 쓴 답에서 []가 나와 카드가 안 떴다
+  'decisions에는 마지막 AI 답이 사용자에게 고르거나 정하라고 묻는 것만 최대 3개 넣는다(번호 붙은 결정 하나가 하나). ' +
+  '선택지 이름(A·B·1·2) 없이 추천안만 있으면 options를 [{"key": "ㅇㅋ", "label": 추천안}, {"key": "아니", "label": 그 반대}]로 만들고 pick은 "ㅇㅋ". ' +
+  '선택지도 추천도 없는 질문·확인 부탁·할 일 안내는 넣지 않는다. 고를 게 없으면 [].'
+
 const FLOW_SYSTEM =
   "너는 사용자가 여러 AI 세션을 오가다 '이 세션에서 뭘 하던 중이었지?'를 잊었을 때 보는 흐름 요약을 쓴다. 사용자는 비개발자다. 쉬운 한국어로 쓰고 기술 용어는 그대로 둔다."
 const FLOW_ASK = `아래는 한 Claude Code 세션의 처음부터 지금까지 대화다. 마지막 부분만이 아니라 전체 흐름을 요약해 JSON 하나만 출력한다.
@@ -238,34 +255,61 @@ const FLOW_ASK = `아래는 한 Claude Code 세션의 처음부터 지금까지 
  "steps": ["처음부터 지금까지 거쳐 온 주요 단계 3~6개, 오래된 것부터, 각 35자 이내"],
  "now": "지금 멈춘 곳 한 줄(50자 이내)",
  "waiting": "AI가 사용자에게 기다리는 답이나 행동 한 줄(50자 이내, 없으면 빈 문자열)",
- "next": "그다음 할 일 한 줄(50자 이내, 없으면 빈 문자열)"}
-파일 경로·세션 id·코드 이름은 빼고, 무엇을 위해 무엇을 했는지 쓴다.`
+ "next": "그다음 할 일 한 줄(50자 이내, 없으면 빈 문자열)",
+ "decisions": ${DECISIONS_SHAPE}}
+파일 경로·세션 id·코드 이름은 빼고, 무엇을 위해 무엇을 했는지 쓴다.
+${DECISIONS_RULE}`
 const FLOW_STEP = `아래는 한 Claude Code 세션의 이전 흐름 요약과 방금 끝난 대화 하나다. 이전 요약을 고쳐 같은 모양의 JSON 하나만 출력한다.
 - goal: 목표가 분명히 바뀐 게 아니면 그대로 둔다.
 - steps: 이전 단계는 그대로 두고, 이번 대화로 새 단계에 들어섰을 때만 맨 끝에 하나 더한다. 6개가 넘으면 오래된 둘을 하나로 합친다.
 - now·waiting·next: 방금 대화 기준으로 새로 쓴다. waiting은 AI가 사용자에게 기다리는 답이나 행동(없으면 빈 문자열).
-파일 경로·세션 id·코드 이름은 빼고 쉬운 한국어로 쓴다.`
+- decisions: 방금 AI 답 기준으로 새로 쓴다. 모양: ${DECISIONS_SHAPE}
+파일 경로·세션 id·코드 이름은 빼고 쉬운 한국어로 쓴다.
+${DECISIONS_RULE}`
 
 const stamp = () => {
   const d = new Date()
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+// 글자 수 상한: 모델이 길이 지시를 넘겨도 저장본은 짧게. 2026-10-20 단계 하나가 270자까지 불어나
+// 다음 고치기 답이 토큰 한도에서 잘려(JSON 깨짐) 10:51부터 흐름이 멈췄다
+const clip = (v: unknown, n: number) => {
+  const t = String(v ?? '').replace(/\s+/g, ' ').trim()
+  return t.length <= n ? t : `${t.slice(0, n - 1)}…`
+}
+
+// 요약에 반영한 답 표시(Flow.of): 답 끝 40자
+const tail = (t: string) => t.replace(/\s+/g, ' ').trim().slice(-40)
+
+// 결정 카드: 고를 것과 선택지가 둘 다 있는 것만, 최대 3개. 모양이 이상한 항목은 버린다
+const decisionsOf = (v: unknown): Decision[] =>
+  (Array.isArray(v) ? v : []).slice(0, 3).flatMap(raw => {
+    const d = (raw ?? {}) as Record<string, unknown>
+    const options = (Array.isArray(d.options) ? d.options : [])
+      .map(o => (o ?? {}) as Record<string, unknown>)
+      .map(o => ({ key: clip(o.key, 8), label: clip(o.label, 30), then: clip(o.then, 60) }))
+      .filter(o => o.key)
+      .slice(0, 5)
+    return d.ask && options.length ? [{ ask: clip(d.ask, 40), why: clip(d.why, 80), options, pick: clip(d.pick, 8), reason: clip(d.reason, 60) }] : []
+  })
+
 // 모델 답에서 JSON을 꺼낸다. 목표와 단계 목록이 없으면 실패
 const parseFlow = (text: string, count: number): Flow | undefined => {
   try {
     const got = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? '') as Partial<Flow>
     if (!got.goal || !Array.isArray(got.steps)) return undefined
-    const steps = got.steps.map(String)
+    const steps = got.steps.map(s => clip(s, 50))
     return {
       at: stamp(),
       count,
-      goal: String(got.goal),
+      goal: clip(got.goal, 50),
       // 6개가 넘으면 첫 단계(어디서 시작했는지)와 최근 5개
       steps: steps.length <= 6 ? steps : [steps[0]!, ...steps.slice(-5)],
-      now: String(got.now ?? ''),
-      waiting: String(got.waiting ?? ''),
-      next: String(got.next ?? ''),
+      now: clip(got.now, 80),
+      waiting: clip(got.waiting, 80),
+      next: clip(got.next, 80),
+      decisions: decisionsOf(got.decisions),
     }
   } catch {
     return undefined
@@ -289,9 +333,10 @@ const makeFlow = async ($: EngineInterface, quiet = false) => {
     model: 'haiku',
     system: FLOW_SYSTEM,
     prompt: `${FLOW_ASK}\n\n<대화>\n${digest(msgs)}\n</대화>`,
-    maxTokens: 800,
+    maxTokens: 1400,
   })
-  const item = r.isAnswered ? parseFlow(r.text, msgs.length) : undefined
+  const parsed = r.isAnswered ? parseFlow(r.text, msgs.length) : undefined
+  const item = parsed && { ...parsed, of: tail(msgs.findLast(m => m.role === 'assistant' && m.text.trim())?.text ?? '') }
   if (!item) {
     if (!quiet) await update($, flowNote, () => (r.isAnswered ? '요약 실패: 답 형식이 이상해요. [다시 요약]' : `요약 실패: ${r.reason}. [다시 요약]`))
     return undefined
@@ -309,17 +354,22 @@ const stepFlow = async ($: EngineInterface, answer: string) => {
   await update($, asked, () => mine)
   const before = await read($, flow)
   if (!before) return makeFlow($, true)
-  const { goal, steps, now, waiting, next } = before
+  // 이전 요약도 잘라서 보낸다: 상한을 두기 전에 저장된 긴 요약이 다시 불어나지 않게
+  const prev = { goal: clip(before.goal, 50), steps: before.steps.map(s => clip(s, 50)), now: clip(before.now, 80), waiting: clip(before.waiting, 80), next: clip(before.next, 80) }
   const r = await $.model.complete({
     model: 'haiku',
     system: FLOW_SYSTEM,
     prompt:
-      `${FLOW_STEP}\n\n<이전 요약>\n${JSON.stringify({ goal, steps, now, waiting: waiting ?? '', next })}\n</이전 요약>\n\n` +
-      `<방금 대화>\n사용자: ${(mine[mine.length - 1] ?? '').slice(0, 1500)}\nAI: ${answer.slice(0, 2500)}\n</방금 대화>`,
-    maxTokens: 600,
+      `${FLOW_STEP}\n\n<이전 요약>\n${JSON.stringify(prev)}\n</이전 요약>\n\n` +
+      // 고르라는 말은 보통 답 끝에 있어 긴 답은 앞 1천 자 + 끝 3천 자
+      `<방금 대화>\n사용자: ${(mine[mine.length - 1] ?? '').slice(0, 1500)}\n` +
+      `AI: ${answer.length <= 4000 ? answer : `${answer.slice(0, 1000)}\n…(중간 생략)…\n${answer.slice(-3000)}`}\n</방금 대화>`,
+    maxTokens: 1200,
   })
   const item = r.isAnswered ? parseFlow(r.text, msgs.length) : undefined
-  return item ? saveFlow($, sid, item) : undefined
+  // 고치기 답이 깨졌으면 처음부터 다시 요약한다: 한 번 깨진 요약이 계속 멈춰 있지 않게
+  if (!item) return r.isAnswered ? makeFlow($, true) : undefined
+  return saveFlow($, sid, { ...item, of: tail(answer) })
 }
 
 // [흐름]을 열 때: 저장본이 없으면 만들고, 있으면 그대로 보여 주며 그 뒤 새 대화 수만 알려 준다
@@ -357,8 +407,11 @@ const setLive = async ($: EngineInterface, state: Live['state'], why = '') => {
   const before = await readJson<Live>($, path)
   const since = before && before.state === state && before.why === why ? before.since : Date.now()
   // 다른 세션에 보일 이름: 세션 칸 이름 → 흐름 목표 → 세션 id 앞자리
-  const name = (await read($, desk))?.find(r => r.id === sid)?.name ?? (await read($, flow))?.goal ?? sid.slice(0, 8)
-  await $.fs.write(path, JSON.stringify({ id: sid, state, why, since, name, at: (await read($, flow))?.at }))
+  const fl = await read($, flow)
+  const name = (await read($, desk))?.find(r => r.id === sid)?.name ?? fl?.goal ?? sid.slice(0, 8)
+  // 답하는 중으로 바뀌는 순간 = 사용자가 뭔가 보낸 때(말 보내기·질문 창 답)
+  const typed = state === 'working' && before?.state !== 'working' ? Date.now() : before?.typed
+  await $.fs.write(path, JSON.stringify({ id: sid, state, why, since, name, at: fl?.at, typed, doing: clip(fl?.waiting || fl?.now, 60) }))
 }
 
 const beat = async ($: EngineInterface) => {
@@ -392,29 +445,48 @@ const afterTurn = async ($: EngineInterface, answer: string) => {
   await setLive($, item?.waiting ? 'waiting' : 'idle', item?.waiting ?? '')
 }
 
+// 코드를 고쳐 다시 불러오면 답이 끝나는 순간 돌던 흐름 갱신이 끊긴다(엔진이 기다리던 Haiku 호출을 버림, 10-20 결정 카드가 안 뜬 원인).
+// 다시 불러오면 session.start가 오니 그때 마지막 답이 요약에 없으면 이어서 고친다. 도구를 쓰는 중인 답(작업 중)은 건드리지 않는다
+const catchUpFlow = async ($: EngineInterface) => {
+  const last = (await messages($)).at(-1)
+  if (last?.role !== 'assistant' || last.toolUses.length || !last.text.trim()) return
+  if ((await read($, flow))?.of !== tail(last.text)) await afterTurn($, last.text)
+}
+
 // 다른 세션 상태: 파일 시각이 바뀐 것만 다시 읽는다. 세션 칸 줄의 '⏳ 답 기다림'에만 쓴다(메뉴판 ⏳ 줄·알림은 2026-10-13 사용자 요청으로 뺌)
 const liveCache = new Map<string, { at: number; live?: Live }>()
+
+// 돌아오면 3줄 브리핑(10-20 사용자 요청): 어느 탭에서도 AWAY 넘게 아무것도 안 보냈으면, 그사이 답 기다림·끝남으로 바뀐 다른 탭을 3개까지.
+// 흐름 칸은 이 탭 하나의 이야기, 이건 비운 사이 다른 탭 전부. 탭마다 있는 흐름 요약(Live.doing)을 써서 모델을 부르지 않는다. 어느 탭에서든 말을 보내면 사라진다
+const briefOf = (mine: Live | undefined, list: Live[], now: number): Brief | null => {
+  const last = Math.max(mine?.typed ?? 0, ...list.map(l => l.typed ?? 0))
+  if (!last || now - last < AWAY) return null
+  const items = list
+    .filter(l => l.since > last && l.state !== 'working')
+    .sort((a, b) => Number(b.state === 'waiting') - Number(a.state === 'waiting') || b.since - a.since)
+    .slice(0, 3)
+  return items.length ? { mins: Math.floor((now - last) / 60_000), items } : null
+}
 const showPeers = async ($: EngineInterface) => {
   const dir = await liveDir($)
   const sid = await $.session.id()
   const now = Date.now()
   const list: Live[] = []
+  let self: Live | undefined
   for (const f of await $.fs.list(dir).catch(() => [])) {
-    if (f.kind !== 'file' || !f.name.endsWith('.json') || f.name === `${sid}.json` || now - f.mtimeMs > LIVE_STALE) continue
+    if (f.kind !== 'file' || !f.name.endsWith('.json') || now - f.mtimeMs > LIVE_STALE) continue
     const hit = liveCache.get(f.name)
     const live = hit && hit.at === f.mtimeMs ? hit.live : await readJson<Live>($, `${dir}/${f.name}`)
     liveCache.set(f.name, { at: f.mtimeMs, live })
-    if (live && live.state !== 'off') list.push(live)
+    if (f.name === `${sid}.json`) self = live
+    else if (live && live.state !== 'off') list.push(live)
   }
+  const b = briefOf(self, list, now)
+  if (JSON.stringify(b) !== JSON.stringify(await read($, brief))) await update($, brief, () => b)
   const before = await read($, peers)
   if (JSON.stringify(before) === JSON.stringify(list)) return
   await update($, peers, () => list)
   void attachDoing($).catch(() => undefined)
-}
-
-const hhmm = (ms: number) => {
-  const d = new Date(ms)
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 // 사용량 줄(2026-10-19 사용자: statusline이 이상해 mod로 바꿈, statusline은 끔). 메뉴판 맨 아래 = 입력창 바로 위 한 줄:
@@ -600,6 +672,7 @@ export const register: Register = on => {
     })
     await showFlow($)
     await setLive($, 'idle').catch(() => undefined)
+    void catchUpFlow($).catch(() => undefined)
     await showPeers($).catch(() => undefined)
     void $.clock.every(60_000, () => beat($).catch(() => undefined))
     void $.clock.after(2000, () => refreshDesk($).catch(() => undefined))
@@ -656,7 +729,11 @@ export const register: Register = on => {
   // 다음 말을 보내면 펼친 칸을 접는다: 답을 읽을 자리를 비워 둔다
   on('prompt.submit', async ($, e, next) => {
     void setLive($, 'working').catch(() => undefined)
+    await update($, brief, () => null)
     if (await read($, tab)) await update($, tab, () => '')
+    // 답을 보냈으면 결정 카드를 내린다. 다음 답이 끝나면 흐름 갱신이 새로 채운다
+    await update($, flow, f => (f?.decisions?.length ? { ...f, decisions: [] } : f))
+    await update($, whyOpen, () => false)
     return next(e)
   })
 
@@ -783,22 +860,65 @@ export const register: Register = on => {
         </Box>
       </Box>
     )
+    // 돌아오면 브리핑: 칸이 닫혀 있을 때 메뉴판 바로 아래
+    const br = await read($, brief)
+    const briefRows = br && (
+      <Box key="brief" flexDirection="column">
+        <Text color="claude">{`↩ 자리 비운 ${br.mins}분 사이`}</Text>
+        {br.items.map(l => {
+          const win = rows?.find(r => r.id === l.id)?.win
+          return (
+            <Text key={`brief-${l.id}`} wrap="truncate">
+              {`  · ${l.name}${win ? ` 창${win}` : ''} `}
+              <Text bold>{l.state === 'waiting' ? '답 기다림' : '끝남'}</Text>
+              {l.doing ? <Text dimColor>{`: ${l.doing}`}</Text> : ''}
+            </Text>
+          )
+        })}
+      </Box>
+    )
     if (!open) {
-      if (!fl) return wrap(menu)
+      if (!fl) return wrap(briefRows ? <Box flexDirection="column">{menu}{briefRows}</Box> : menu)
       // 칸이 닫혀 있으면 이 세션의 목표·지금을 늘 보인다(where-am-i 방식). 기다리는 답 줄은 사용자 요청으로 뺐다(10-14)
+      // 방금 답이 고르라고 했으면 결정 카드: 한 줄에 고를 것과 선택지 뜻, [왜? 앞뒤]로 앞 흐름·고르면 생기는 일·추천 이유
+      const cards = fl.decisions ?? []
+      const why = await read($, whyOpen)
+      const pickMark = (d: Decision, key: string) => (key === d.pick ? ' ★' : '')
       return wrap(
         <Box flexDirection="column">
           {menu}
-          {fl && (
-            <Text key="strip" wrap="truncate">
-              <Text color="claude" bold>
-                ◆{' '}
-              </Text>
-              {fl.goal}
-              <Text dimColor>{'  ▶ '}</Text>
-              {fl.now}
+          {briefRows}
+          <Text key="strip" wrap="truncate">
+            <Text color="claude" bold>
+              ◆{' '}
             </Text>
-          )}
+            {fl.goal}
+            <Text dimColor>{'  ▶ '}</Text>
+            {fl.now}
+          </Text>
+          {cards.map((d, i) => (
+            <Box key={`decide-${i}`} flexDirection="column">
+              <Box>
+                <Box width={WHY_W} flexShrink={0}>
+                  {i === 0 && <Button key="why" label={why ? '접기' : '왜? 앞뒤'} dimColor onPress={() => update($, whyOpen, v => !v)} />}
+                </Box>
+                <Text wrap="truncate">
+                  <Text color="claude">❓ </Text>
+                  {d.ask}
+                  {!why && <Text dimColor>{` — ${d.options.map(o => `${o.key} ${o.label}${pickMark(d, o.key)}`).join(' · ')}`}</Text>}
+                </Text>
+              </Box>
+              {why && (
+                <Box flexDirection="column" marginLeft={WHY_W + 3}>
+                  {d.why && <Text wrap="wrap" dimColor>{`앞: ${d.why}`}</Text>}
+                  {d.options.map(o => (
+                    <Text key={`opt-${i}-${o.key}`} wrap="wrap">{`${o.key} ${o.label}${pickMark(d, o.key)}${o.then ? ` → ${o.then}` : ''}`}</Text>
+                  ))}
+                  {d.reason && <Text wrap="wrap" dimColor>{`★ 추천 이유: ${d.reason}`}</Text>}
+                </Box>
+              )}
+            </Box>
+          ))}
         </Box>,
       )
     }
@@ -808,7 +928,7 @@ export const register: Register = on => {
       const said = await read($, asked)
       const long = await read($, showAsked)
       const shownAsk = said.map((text, i) => ({ text, i })).slice(-(long ? ASKED_LONG : ASKED_SHORT))
-      // 왼쪽에 라벨을 고정하고 기호로 구분한다: 흐름은 번호, 지금 ▶(강조색), 기다림 ⏳(경고색), 다음 →
+      // 왼쪽에 라벨을 고정하고 기호로 구분한다: 흐름은 번호, 지금 ▶(강조색), 다음 →. 기다림 ⏳ 줄은 10-20 사용자 요청으로 뺐다
       const row = (key: string, label: string, body: string, look: Record<string, unknown> = {}) => (
         <Box key={key}>
           <Text dimColor>{` ${label}  `}</Text>
@@ -830,7 +950,6 @@ export const register: Register = on => {
           {fl && row('f-goal', '목표', fl.goal)}
           {fl && fl.steps.map((s, i) => row(`f-step${i}`, i === 0 ? '흐름' : '    ', `${i + 1}. ${s}`))}
           {fl && row('f-now', '지금', `▶ ${fl.now}`, { bold: true, color: 'claude' })}
-          {fl?.waiting ? row('f-wait', '기다림', `⏳ ${fl.waiting}`, { color: 'warning' }) : null}
           {fl?.next ? row('f-next', '다음', `${fl.waiting === undefined ? '? ' : '→ '}${fl.next}`, fl.waiting === undefined ? { color: 'warning' } : {}) : null}
           {said.length > 0 && (
             <Box key="asked-head">
@@ -860,7 +979,7 @@ export const register: Register = on => {
     if (open === 'desk') {
       const opened = await read($, showEnded)
       const more = await read($, moreDesk)
-      // 줄 모양: [끝][킵][열기] 상태 · (지금·답 기다림·킵) · (Codex) · 이름 (시각) — 하던 일. 실행 중이면 시각은 빼고, 킵·꺼짐은 남긴다.
+      // 줄 모양: [끝][킵][열기] 상태 · (창N) · (지금·킵) · (Codex) · 이름 (시각) — 하던 일. 실행 중이면 시각은 빼고, 킵·꺼짐은 남긴다.
       // 칸마다 지금 보이는 줄 중 가장 긴 것에 맞춰 띄어쓰기로 채운다. 빈 칸은 구분점(·)도 띄어쓰기로 바꿔 열만 남긴다
       // 하던 일: 이 세션은 지금 흐름, 답 기다리는 세션은 그 이유, 나머지는 세션 칸을 읽을 때 붙인 흐름 요약
       const order = [
@@ -873,7 +992,10 @@ export const register: Register = on => {
         const wait = isBlocked(r.id)
         return {
           state: r.done ? '✓ 끝냄' : r.live ? '● 실행 중' : '○ 꺼짐',
-          mark: [r.me ? '▶ 지금' : '', wait ? `⏳ 답 기다림 ${hhmm(wait.since)}~` : '', r.kept ? '⏸ 킵' : ''].filter(Boolean).join(' · '),
+          // 창이 여럿일 때 그 탭이 있는 창(10-20 사용자 선택 A). 창 하나면 desk_json.py가 안 줘서 칸이 통째로 빠진다
+          win: r.live && r.win ? `창${r.win}` : '',
+          // ⏳ 답 기다림 표시는 10-20 사용자 요청으로 뺐다. 답 기다리는 세션은 그대로 위로 올리고 하던 일 칸에 묻는 내용을 보인다
+          mark: [r.me ? '▶ 지금' : '', r.kept ? '⏸ 킵' : ''].filter(Boolean).join(' · '),
           tool: r.tool === 'codex' ? 'Codex' : '',
           name: r.name,
           when: !r.live || r.kept || r.done ? `(${r.last})` : '',
@@ -881,13 +1003,13 @@ export const register: Register = on => {
         }
       }
       const shown = [...order, ...(opened ? ended : [])].map(partsOf)
-      const widest = (k: 'state' | 'mark' | 'tool' | 'name' | 'when') => Math.max(0, ...shown.map(p => cellsOf(p[k])))
-      const w = { state: widest('state'), mark: widest('mark'), tool: widest('tool'), name: Math.min(NAME_MAX, widest('name')), when: widest('when') }
+      const widest = (k: 'state' | 'win' | 'mark' | 'tool' | 'name' | 'when') => Math.max(0, ...shown.map(p => cellsOf(p[k])))
+      const w = { state: widest('state'), win: widest('win'), mark: widest('mark'), tool: widest('tool'), name: Math.min(NAME_MAX, widest('name')), when: widest('when') }
       const slot = (t: string, width: number) => (width === 0 ? '' : t ? `${fit(t, width)} · ` : ' '.repeat(width + 3))
       const line = (r: DeskRow) => {
         const p = partsOf(r)
         return (
-          ` ${slot(p.state, w.state)}${slot(p.mark, w.mark)}${slot(p.tool, w.tool)}${fit(p.name, w.name)}` +
+          ` ${slot(p.state, w.state)}${slot(p.win, w.win)}${slot(p.mark, w.mark)}${slot(p.tool, w.tool)}${fit(p.name, w.name)}` +
           `${w.when ? ` ${fit(p.when, w.when)}` : ''}${p.doing ? ` — ${p.doing}` : ''}`
         ).trimEnd()
       }

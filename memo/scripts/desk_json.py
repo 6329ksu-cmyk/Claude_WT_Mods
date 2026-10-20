@@ -6,6 +6,8 @@
 
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 
@@ -13,12 +15,50 @@ os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
 sys.path.insert(0, os.path.expanduser("~/.claude/scripts"))
 import recent_sessions as rs  # noqa: E402
 
+# Windows Terminal 창마다 탭 이름(UI Automation). 실행 중인 프로그램 정보로는 어느 창인지 알 수 없어 탭 이름으로 맞춘다(2026-10-12 확인)
+WIN_PS = r"""
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$A = [Windows.Automation.AutomationElement]
+$wins = $A::RootElement.FindAll([Windows.Automation.TreeScope]::Children, (New-Object Windows.Automation.PropertyCondition($A::ClassNameProperty, 'CASCADIA_HOSTING_WINDOW_CLASS')))
+$tab = New-Object Windows.Automation.PropertyCondition($A::ControlTypeProperty, [Windows.Automation.ControlType]::TabItem)
+ConvertTo-Json -Compress -Depth 3 @($wins | ForEach-Object {
+  $r = $_.Current.BoundingRectangle
+  [pscustomobject]@{
+    min = "$($_.GetCurrentPropertyValue([Windows.Automation.WindowPattern]::WindowVisualStateProperty))" -eq 'Minimized'
+    x = $r.X; y = $r.Y
+    tabs = @($_.FindAll([Windows.Automation.TreeScope]::Descendants, $tab) | ForEach-Object { $_.Current.Name })
+  }
+})
+"""
+
+
+def tab_key(name):
+    """Claude 탭 이름 앞의 상태 기호(✳ ◑ 등)를 떼고 맞춘다"""
+    return re.sub(r"^\W+", "", name or "").strip()
+
+
+def window_of_tabs():
+    """탭 이름 → 창 번호(왼쪽 창부터 1, 최소화한 창은 뒤). 창이 하나뿐이면 번호가 쓸모없어 빈 dict, 못 읽어도 빈 dict"""
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", WIN_PS], capture_output=True, text=True,
+                             encoding="utf-8", errors="ignore", timeout=20).stdout
+        wins = json.loads(out or "[]")
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return {}
+    if len(wins) < 2:
+        return {}
+    wins.sort(key=lambda w: (w["min"], w["x"], w["y"]))
+    return {tab_key(t): i for i, w in enumerate(wins, 1) for t in w["tabs"]}
+
 
 def main(hours=24.0):
     data = rs.desk_data(hours)
     live, labels, rows = data["live"], data["labels"], data["rows"]
+    wins = window_of_tabs()
     print(json.dumps([
         dict(id=s["id"], tool=s["tool"], name=rs.name_of(s, labels), live=s["id"] in live, state=s["state"], kept=s["kept"],
+             win=wins.get(tab_key(rs.name_of(s, labels))) if s["id"] in live else None,
              last=time.strftime("%m-%d %H:%M", time.localtime(s.get("mtime", s.get("opened", data["end"])))),
              cwd=s["cwd"], **rs.desk_details(s, labels))
         for s in rows
