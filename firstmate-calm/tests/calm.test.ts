@@ -82,6 +82,19 @@ describe("activation", () => {
     expect(isHidden(await $.ui.render(toolGroup()))).toBe(true);
   });
 
+  test("draws rows while a slow resume holds the load, within the hook budget, and redraws them once loaded", async ($, on) => {
+    const { clock, journal } = world(on, { preference: "on\n", messagesDelayMs: 12_000 });
+    const drawn: unknown[] = [];
+    void $.ui.render(toolUse()).then((tree) => drawn.push(tree));
+    void $.ui.render(toolGroup()).then((tree) => drawn.push(tree));
+    await clock.advance(2_000);
+    expect(drawn).toHaveLength(2);
+    expect(journal.invalidations).toHaveLength(0);
+    await clock.advance(10_000);
+    expect(journal.invalidations).toContain("ui.render");
+    expect(isHidden(await $.ui.render(toolUse()))).toBe(true);
+  });
+
   test("reads the legacy max value as on", async ($, on) => {
     world(on, { preference: "max\n" });
     expect(isHidden(await $.ui.render(toolResult()))).toBe(true);

@@ -57,6 +57,8 @@ export type WorldOptions = {
   home?: string | undefined;
   /** What `$.session.messages()` answers. */
   messages?: readonly { role: "user" | "assistant"; text: string; toolUses: readonly unknown[] }[];
+  /** How long `$.session.messages()` takes on the mock clock, as a slow resume holds it. */
+  messagesDelayMs?: number;
   /** The `theme` row's value as `$.config.list()` reports it; omitted means `dark`. */
   theme?: unknown;
 };
@@ -134,6 +136,7 @@ export function world(on: On, options: WorldOptions = {}): World {
   });
   on("session.messages", async () => {
     journal.sessionMessageReads += 1;
+    if (options.messagesDelayMs !== undefined) await clock.sleep(options.messagesDelayMs);
     return { value: [...(options.messages ?? [])] as SessionMessage[] };
   });
   on("session.start", async (_$, e) => ({ cwd: e.cwd }));

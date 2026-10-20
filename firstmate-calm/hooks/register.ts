@@ -39,6 +39,8 @@
 // Loading is lazy and cached within a session: a resumed transcript or a hot reload can
 // draw restored rows before `session.start`, so every hook awaits that session's load of
 // the per-home preference and restored working notes rather than trusting a stale "off".
+// A drawing waits at most LOAD_WAIT_MS: waiting on another dispatch's load spends its own
+// budget, and a resume can hold the load past it; the load's closing invalidation redraws.
 // Each `session.start` clears presentation classifications and reloads the new session.
 import type { EngineInterface, Register, RenderElement, RenderInput } from "claude-code";
 import {
@@ -86,6 +88,13 @@ let calm = false;
 let preferencePath: string | undefined;
 let activation: Promise<boolean> | undefined;
 let loading: Promise<void> | undefined;
+let loaded = false;
+/**
+ * How long a drawing waits for the session's load. A classic SessionStart hook taking
+ * ~12s on resume (2026-10-20) held the load past the 10s hook budget, so every row
+ * drawn meanwhile was skipped with "ran past its 10s budget".
+ */
+const LOAD_WAIT_MS = 2000;
 let ticker: { cancel(): void } | undefined;
 const workingNotes = new Set<string>();
 const finalReplies = new Set<string>();
@@ -176,6 +185,7 @@ async function load($: EngineInterface): Promise<void> {
       void repaintShip($);
     });
   }
+  loaded = true;
   invalidateDrawings($);
 }
 
@@ -184,11 +194,19 @@ function ensureLoaded($: EngineInterface): Promise<void> {
   return loading;
 }
 
+/** A drawing's bounded wait for the load; past it the row draws with what is known. */
+async function awaitLoad($: EngineInterface, signal: AbortSignal): Promise<void> {
+  const pending = ensureLoaded($);
+  if (loaded) return;
+  await Promise.race([pending, $.clock.sleep(LOAD_WAIT_MS, { signal }).catch(() => undefined)]);
+}
+
 async function resetSession($: EngineInterface): Promise<void> {
   if (loading !== undefined) await loading.catch(() => undefined);
   calm = false;
   preferencePath = undefined;
   loading = undefined;
+  loaded = false;
   workingNotes.clear();
   finalReplies.clear();
   doorbellVerdicts.clear();
@@ -451,7 +469,7 @@ export const register: Register = (on) => {
 
   on("ui.render", { component: "Spinner" }, async ($, e, next) => {
     if (!(await isActivated($))) return next(e);
-    await ensureLoaded($);
+    await awaitLoad($, next.signal);
     if (!calm || e.surface !== "terminal") {
       sites.delete(e.requestId);
       return next(e);
@@ -468,23 +486,23 @@ export const register: Register = (on) => {
 
   on("ui.render", { component: "ToolUse" }, async ($, e, next) => {
     if (!(await isActivated($))) return next(e);
-    await ensureLoaded($);
+    await awaitLoad($, next.signal);
     return calm ? hiddenRow($, e) : next(e);
   });
   on("ui.render", { component: "ToolResult" }, async ($, e, next) => {
     if (!(await isActivated($))) return next(e);
-    await ensureLoaded($);
+    await awaitLoad($, next.signal);
     return calm ? hiddenRow($, e) : next(e);
   });
   on("ui.render", { component: "ToolGroup" }, async ($, e, next) => {
     if (!(await isActivated($))) return next(e);
-    await ensureLoaded($);
+    await awaitLoad($, next.signal);
     return calm ? hiddenRow($, e) : next(e);
   });
 
   on("ui.render", { component: "UserMessage" }, async ($, e, next) => {
     if (!(await isActivated($))) return next(e);
-    await ensureLoaded($);
+    await awaitLoad($, next.signal);
     if (!calm) return next(e);
     const operational =
       userTextIsOperational(e.props.text) || (await doorbellIsOperational($, e.props.text));
@@ -493,7 +511,7 @@ export const register: Register = (on) => {
 
   on("ui.render", { component: "AssistantMessage" }, async ($, e, next) => {
     if (!(await isActivated($))) return next(e);
-    await ensureLoaded($);
+    await awaitLoad($, next.signal);
     const key = workingNoteKey(e.props.text);
     return calm && workingNotes.has(key) && !finalReplies.has(key) ? hiddenRow($, e) : next(e);
   });

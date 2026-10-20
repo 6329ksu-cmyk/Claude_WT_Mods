@@ -1,3 +1,4 @@
 ﻿kunchenguid/firstmate 6407052f4c521e39401ce2305dfa45d201249827 (2026-10-12) .claude/mods/firstmate-calm 원본 그대로 복사 2026-10-13
 로컬 수정 2026-10-14: lib/fm-calm-preservation.ts CALM_PRESERVE_MIN_CHARS 240 -> 0 (AI 중간 글은 감추지 않고 도구 줄만 감춤, 사용자 선택 A)
 로컬 수정 2026-10-20: hooks/register.ts isActivated 항상 켬(settings env CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 없이 동작), lib/fm-calm-presentation.ts 켜짐 기록 파일이 없으면 켜짐(처음 설치한 PC에서 /calm 안 쳐도 됨). 사용자 요청: 다른 PC 설치 단계 줄이기
+로컬 수정 2026-10-20: hooks/register.ts 화면 hook이 준비(load)를 최대 2초만 기다림. resume 때 classic SessionStart hook(~12초)이 load를 붙잡아 "ui.render hook skipped: ran past its 10s budget"이 나던 문제. tests/calm.test.ts·support.ts에 회귀 테스트 추가
