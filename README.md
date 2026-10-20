@@ -8,13 +8,13 @@ Claude Code mods 두 개: `memo`(메뉴판)와 `fm`(돛단배).
 
 ```
 /plugin install memo --marketplace 6329ksu-cmyk/Cluade_Mods
-/plugin install fm --marketplace 6329ksu-cmyk/Cluade_Mods
 ```
 
+memo가 `fm`(돛단배)을 함께 쓰도록 되어 있어 이 한 줄로 둘 다 깔린다(`+ 1 dependency: fm`).
 셸에서는 `claude plugin install memo --marketplace 6329ksu-cmyk/Cluade_Mods`.
 데스크톱 앱에서는 프롬프트 옆 + → Plugins → Add marketplace에 `6329ksu-cmyk/Cluade_Mods` → Add plugin.
 
-돛단배는 설치하면 바로 켜져 있다. `/calm`으로 끄고 켠다.
+돛단배는 설치하면 바로 켜져 있다. 싫으면 `/calm`으로 끈다.
 
 비공개 저장소면 GitHub에서 초대받은 계정으로 그 PC에 `gh auth login` 뒤 `gh auth setup-git`을 해 둬야 설치된다.
 
