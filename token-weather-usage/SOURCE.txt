@@ -1,0 +1,2 @@
+출처: https://github.com/augiefra/claude-mods  plugins/token-weather-usage  커밋 550611d4f8092fd4b97358ad6faa8e7bf01ca5bb, 3.17.3, Apache-2.0 (LICENSE·NOTICE 함께 둠)
+2026-10-21 statuslin.es 마켓플레이스(https://statuslin.es/marketplace.json)에서 설치한 것을 그대로 복사. 수정 없음. 점검: 인터넷·프로그램 실행 없음, $.store와 env(LANG 등) 읽기만

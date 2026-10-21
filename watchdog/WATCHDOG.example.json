@@ -1,0 +1,11 @@
+{
+  "instructions": "메모는 한국어로 짧게 쓴다. 확인하지 않고 '됐다'고 말한 것, 요청과 다르게 한 것, 되돌리기 어려운 작업을 묻지 않고 한 것을 먼저 본다. 검토를 마치면 SubagentHandback 같은 보고 도구를 찾거나 부르지 말고, 답을 'done' 한 단어로 끝낸다(이 버전에는 그 도구가 없다).",
+  "watchdogs": [
+    {
+      "name": "default",
+      "model": "sonnet",
+      "effort": "medium",
+      "reviewMode": "agent-end"
+    }
+  ]
+}

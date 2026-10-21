@@ -1,11 +1,19 @@
 {
   "name": "cluade-mods",
-  "owner": { "name": "6329ksu-cmyk" },
+  "owner": {
+    "name": "6329ksu-cmyk"
+  },
   "plugins": [
     {
       "name": "memo",
       "source": "./memo",
-      "dependencies": ["fm"],
+      "dependencies": [
+        "fm",
+        "slash-ko",
+        "aside",
+        "watchdog",
+        "token-weather-usage"
+      ],
       "description": "입력창 위 메뉴판: 메모(전역·세션·기한), 흐름 요약과 내 질문 바로가기, 세션 칸, 모델 칸"
     },
     {
@@ -17,6 +25,21 @@
       "name": "slash-ko",
       "source": "./slash-ko",
       "description": "슬래시(/) 메뉴의 명령·스킬 설명을 한국어 한 줄로. AI가 읽는 스킬 목록은 영어 원문 그대로"
+    },
+    {
+      "name": "aside",
+      "source": "./aside",
+      "description": "/aside: 이 대화를 아는 도구 없는 복제 AI가 옆 창에서 답함, 본 대화엔 안 남음 (escapeboy/claude-code-kit, MIT, 한국어 로컬 수정)"
+    },
+    {
+      "name": "watchdog",
+      "source": "./watchdog",
+      "description": "옆 AI가 답 끝마다 검사해 놓친 점을 짧게 알림, 탭마다 /watchdog on (matteoantoci/claude-code-watchdog, Apache-2.0, Windows HOME 로컬 수정)"
+    },
+    {
+      "name": "token-weather-usage",
+      "source": "./token-weather-usage",
+      "description": "입력창 위 한 줄: 대화칸 날씨·5h/7일 한도·캐시·비용·도는 서브에이전트 (augiefra/claude-mods, Apache-2.0, 수정 없음)"
     }
   ]
 }

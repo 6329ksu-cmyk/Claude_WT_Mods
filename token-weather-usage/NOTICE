@@ -1,0 +1,48 @@
+claude-mods
+Copyright 2026 Eric Cologni
+
+token-weather-usage includes code adapted from the Token Weather example mod
+(context weather, context tokens, recent turns chart) in
+https://github.com/anthropics/claude-code-playground
+Copyright 2026 Anthropic PBC, licensed under the Apache License, Version 2.0.
+Changes: English and French labels, one-line layout, merged with the usage gauges below.
+
+The 5-hour and 7-day usage gauges were written for this mod after
+usage-meter by HolyGrail (https://github.com/HolyGrail/claude-mods/tree/main/plugins/usage-meter):
+same idea (gauges with an elapsed-time marker, a reading shared across
+sessions), without copying its code.
+
+The prompt cache block (share of the prompt read from the cache, time left
+before it lapses, missed and expired states) was written for this mod after
+prompt-cache-control by Daniel San (https://github.com/davila7/claude-code-templates,
+MIT): same idea (cache usage per request, an inferred lifetime and a
+countdown), without copying its code.
+
+The agents card's tool lines (each running agent's latest tool call) and last-batch
+receipt adapt code from agentpane by Anji Xu
+(https://github.com/xuanji86/claude-agentpane): latestBatch, batchReceipt and
+toolParts. Changes: a batch's cost, agents no list names (a workflow's) followed
+by their activity, English, French and Russian labels. agentpane is licensed
+under the MIT License:
+
+  MIT License
+
+  Copyright (c) 2026 Anji Xu
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.

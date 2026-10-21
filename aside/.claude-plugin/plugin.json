@@ -1,0 +1,9 @@
+{
+  "name": "aside",
+  "version": "0.1.0",
+  "description": "/aside <질문>: 이 대화를 아는 도구 없는 복제 AI가 옆 창에서 답함, 본 대화엔 안 남음 (escapeboy aside, 한국어·답 모양 로컬 수정)",
+  "author": {
+    "name": "escapeboy"
+  },
+  "types": "./types/index.d.ts"
+}

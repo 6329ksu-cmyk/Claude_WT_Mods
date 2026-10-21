@@ -1,0 +1,4 @@
+출처: https://github.com/matteoantoci/claude-code-watchdog  plugins/watchdog  커밋 aca96de (2026-10-08), Apache-2.0 (LICENSE 함께 둠)
+2026-10-20 사용자가 골라("와치독만 붙여") 복사. 소스 전체 점검: 인터넷·명령 실행·eval 없음, 파일 쓰기는 ~/.claude/watchdog/dumps/ 뿐(/watchdog dump 때), 자동 허용은 자기 검토 에이전트 띄우기와 메인이 이미 읽은 파일 읽기뿐, 검토자는 Bash·Edit·Write 불가
+로컬 수정(2026-10-20): Windows의 Claude Code에는 HOME이 없어 ~/.claude/WATCHDOG.json(sonnet·답 끝에만 검사)을 못 읽고 opus로 단계마다 검사하게 됨 → hooks/command/install.ts:112, hooks/dump/install.ts:40, hooks/status/install.ts:26에서 HOME이 없으면 USERPROFILE을 쓰게 함
+설정: ~/.claude/WATCHDOG.json. 기본은 꺼짐, 탭마다 /watchdog on
