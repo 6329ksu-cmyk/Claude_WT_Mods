@@ -1,18 +1,18 @@
-# Cluade_Mods
+# Claude_WT_Mods
 
-Claude Code mods 여섯 개: `memo`(메뉴판), `fm`(작업 중 강아지), `slash-ko`(슬래시 메뉴 한국어), `aside`(옆 질문 창), `watchdog`(답 검사), `token-weather-usage`(사용량 날씨 줄).
+Windows Terminal에서 쓰는 Claude Code mods 여섯 개: `memo`(메뉴판), `fm`(작업 중 강아지), `slash-ko`(슬래시 메뉴 한국어), `aside`(옆 질문 창), `watchdog`(답 검사), `token-weather-usage`(사용량 날씨 줄).
 
 ## 설치
 
 터미널에서 Claude Code를 열고 프롬프트에 친다. `Add marketplace?`에 `y`, 범위는 맨 위 user에서 Enter. 설정 파일은 손대지 않아도 된다.
 
 ```
-/plugin install memo --marketplace 6329ksu-cmyk/Cluade_Mods
+/plugin install memo --marketplace 6329ksu-cmyk/Claude_WT_Mods
 ```
 
 memo가 나머지 다섯 개를 함께 쓰도록 되어 있어 이 한 줄로 여섯 개가 다 깔린다(`+ 5 dependencies`).
-셸에서는 `claude plugin install memo --marketplace 6329ksu-cmyk/Cluade_Mods`.
-데스크톱 앱에서는 프롬프트 옆 + → Plugins → Add marketplace에 `6329ksu-cmyk/Cluade_Mods` → Add plugin.
+셸에서는 `claude plugin install memo --marketplace 6329ksu-cmyk/Claude_WT_Mods`.
+데스크톱 앱에서는 프롬프트 옆 + → Plugins → Add marketplace에 `6329ksu-cmyk/Claude_WT_Mods` → Add plugin.
 
 Claude Code에 내장된 You should know(옆 AI가 놓친 점을 카드로)는 켜기만 한다.
 
@@ -27,7 +27,9 @@ claude plugin enable cc-plugin-you-should-know@builtin
 
 비공개 저장소면 GitHub에서 초대받은 계정으로 그 PC에 `gh auth login` 뒤 `gh auth setup-git`을 해 둬야 설치된다.
 
-업데이트: `claude plugin update memo@cluade-mods` (다른 것도 같은 식) 뒤 Claude Code를 다시 연다.
+업데이트: `claude plugin update memo@claude-wt-mods` (다른 것도 같은 식) 뒤 Claude Code를 다시 연다.
+
+예전 이름(`Cluade_Mods`, `cluade-mods`)으로 깐 PC는 `claude plugin marketplace remove cluade-mods` 뒤 위 설치 한 줄을 다시 친다.
 
 ## 들어 있는 것
 
