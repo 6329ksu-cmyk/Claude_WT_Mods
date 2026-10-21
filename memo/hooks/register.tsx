@@ -489,24 +489,13 @@ const showPeers = async ($: EngineInterface) => {
   void attachDoing($).catch(() => undefined)
 }
 
-// 사용량 줄(2026-10-19 사용자: statusline이 이상해 mod로 바꿈, statusline은 끔). 메뉴판 맨 아래 = 입력창 바로 위 한 줄:
-// 5h·주 한도 → 대화칸 → 모델·effort → 세션 앞 8자리(계정은 로그인 토큰 파일을 열어야 해 10-20 뺐다). 좁으면 뒤부터 잘려 한도는 끝까지 남는다
+// 사용량(2026-10-19 statusline 대신 mod로). 10-21 ⏱ 줄은 token-weather-usage mod 줄로 바꿔, 여기선 메뉴판 '모델' 칸과 90% 한도 알림만 쓴다
 const meter = atom({ plugin: 'memo', key: 'meter' } as const, null as Meter | null)
-// 1분마다 올려 남은 시간을 다시 그린다
-const minute = atom({ plugin: 'memo', key: 'minute' } as const, 0)
 const WARN_AT = 90
-const CAUTION_AT = 75
-const LIMIT_ORDER = ['five_hour', 'seven_day']
 const LIMIT_NAME: Record<string, string> = { five_hour: '5h', seven_day: '주' }
 const EMPTY_METER: Meter = { limits: [], model: '', effort: '' }
 
 const setMeter = ($: EngineInterface, part: Partial<Meter>) => update($, meter, m => ({ ...(m ?? EMPTY_METER), ...part }))
-
-// 5칸 막대: 한 칸 20%, 반 칸은 ▌
-const bar = (p: number) => {
-  const n = Math.round(Math.min(100, Math.max(0, p)) / 10)
-  return `${'█'.repeat(n >> 1)}${n & 1 ? '▌' : ''}${'░'.repeat(5 - (n >> 1) - (n & 1))}`
-}
 
 // 초기화까지 남은 시간: 40m, 1h05, 2d3h. 지났거나 모르면 ''
 const left = (iso?: string) => {
@@ -544,22 +533,6 @@ const warnLimits = ($: EngineInterface, limits: readonly SessionRateLimit[]) => 
       $.ui.toast(`${LIMIT_NAME[l.kind] ?? l.kind} 한도 ${Math.round(l.percentUsed)}%${t ? ` — ${t} 뒤 초기화` : ''}`)
     }
   }
-}
-
-// 사용량 줄 조각: 한도는 75% 노랑·90% 빨강, 남은 시간은 5h는 늘·주는 75%부터. 나머지는 흐리게
-type Piece = { text: string; color?: 'warning' | 'error'; dim?: boolean }
-const rank = (kind: string) => LIMIT_ORDER.indexOf(kind) + 1 || 9
-const meterPieces = (m: Meter, sid: string): Piece[] => {
-  const limits = m.limits.filter(l => Number.isFinite(l.percentUsed)).sort((a, b) => rank(a.kind) - rank(b.kind))
-  const segs: Piece[][] = limits.map(l => {
-    const p = l.percentUsed
-    const t = l.kind === 'five_hour' || p >= CAUTION_AT ? left(l.resetsAt) : ''
-    const color = p >= WARN_AT ? ('error' as const) : p >= CAUTION_AT ? ('warning' as const) : undefined
-    return [{ text: `${LIMIT_NAME[l.kind] ?? l.kind} ${bar(p)} ${Math.round(p)}%`, color }, ...(t ? [{ text: ` · ${t} 남음`, dim: true }] : [])]
-  })
-  const rest = [m.ctx === undefined ? '' : `대화칸 ${m.ctx}%`, `${modelName(m.model)} ${m.effort.toUpperCase()}`.trim(), sid.slice(0, 8)]
-  for (const t of rest) if (t) segs.push([{ text: t, dim: true }])
-  return segs.flatMap((s, i) => (i ? [{ text: ' · ', dim: true }, ...s] : s))
 }
 
 // [끝]: /done과 같은 끝남 표시. 숨김 기록(done.json)은 recent_sessions.py 하나만 쓴다
@@ -678,7 +651,6 @@ export const register: Register = on => {
     void $.clock.after(2000, () => refreshDesk($).catch(() => undefined))
     void $.clock.every(DESK_EVERY, () => refreshDesk($).catch(() => undefined))
     void startMeter($).catch(() => undefined)
-    void $.clock.every(60_000, () => update($, minute, n => n + 1).catch(() => undefined))
 
     return next(e)
   })
@@ -802,20 +774,13 @@ export const register: Register = on => {
     const open: Tab = TABS.includes(stored) ? stored : ''
     const rows = await read($, desk)
     const fl = await read($, flow)
-    // 사용량 줄은 어느 칸이 열려 있든 맨 아래(입력창 바로 위)에 둔다
+    // ⏱ 사용량 줄은 10-21 사용자 요청("이거로 교체하자")으로 token-weather-usage mod 줄로 바꿨다(90% 알림은 남김).
+    // 그 mod나 뒤에 오는 다른 mod가 그린 것은 맨 아래(입력창 바로 위)에 둔다. 되살리기: _backup/20261021-memo-before-weather/
+    const below = await next(e)
+    // 날씨 줄엔 모델·effort가 없어 메뉴판 맨 오른쪽 '모델' 칸에 둔다(10-21 사용자 "어떤 모델 어떤 에포트인지")
     const m = await read($, meter)
-    await read($, minute)
-    const meterRow = m && (
-      <Text key="meter" wrap="truncate">
-        <Text dimColor>⏱ </Text>
-        {meterPieces(m, await $.session.id()).map((p, i) => (
-          <Text key={`meter-${i}`} dimColor={Boolean(p.dim)} {...(p.color ? { color: p.color } : {})}>
-            {p.text}
-          </Text>
-        ))}
-      </Text>
-    )
-    const wrap = (top: RenderElement) => (meterRow ? <Box flexDirection="column">{top}{meterRow}</Box> : top)
+    const modelText = m?.model ? `${modelName(m.model)} ${m.effort.toUpperCase()}`.trim() : ''
+    const wrap = (top: RenderElement) => (below ? <Box flexDirection="column">{top}{below}</Box> : top)
     // 다른 세션 중 답을 기다리는 것: 세션 칸 줄에 쓴다
     const blocked = (await read($, peers)).filter(p => p.state === 'waiting')
     const isBlocked = (id: string) => blocked.find(p => p.id === id)
@@ -858,6 +823,13 @@ export const register: Register = on => {
           <Text dimColor>흐름</Text>
           {button('flow', fl ? fl.at.slice(-5) : '보기')}
         </Box>
+        {modelText ? sep() : null}
+        {modelText ? (
+          <Box flexDirection="column">
+            <Text dimColor>모델</Text>
+            <Text>{modelText}</Text>
+          </Box>
+        ) : null}
       </Box>
     )
     // 돌아오면 브리핑: 칸이 닫혀 있을 때 메뉴판 바로 아래

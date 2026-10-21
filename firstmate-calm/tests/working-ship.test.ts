@@ -3,6 +3,11 @@
 // viewport, and how it lets go of a site the surface no longer draws.
 import { describe, expect, test } from "claude-code/testing";
 import { calmCommand, decodeCells, isStock, rasterOf, spinner, themeChange, unmeasuredSpinner, world } from "./support.ts";
+import { SHOW_BOAT } from "../lib/fm-calm-pet.ts";
+
+// Local change (2026-10-21): the dog walks in the boat's place unless SHOW_BOAT, so the
+// boat's picture tests run only with the boat back.
+const boatTest: typeof test = SHOW_BOAT ? test : () => undefined;
 
 const SAIL = "◿│◣";
 const HULL = "╲▁▁▁╱";
@@ -16,7 +21,7 @@ const TICK = 220;
 const TICKS_PER_MOVE = 4;
 
 describe("the working ship", () => {
-  test("replaces the spinner with a two-row raster sized to the row inside the transcript margin", async ($, on) => {
+  boatTest("replaces the spinner with a two-row raster sized to the row inside the transcript margin", async ($, on) => {
     world(on, { preference: "on\n" });
     const raster = rasterOf(await $.ui.render(spinner("agent-main", { columns: 40, rows: 24 })));
     expect(raster).toBeDefined();
@@ -43,7 +48,7 @@ describe("the working ship", () => {
     expect(backgrounds.flat().every((color) => color === DEFAULT)).toBe(true);
   });
 
-  test("animates the water every tick and moves the hull one column every fourth, through blits of the mounted size", async ($, on) => {
+  boatTest("animates the water every tick and moves the hull one column every fourth, through blits of the mounted size", async ($, on) => {
     const { clock, journal } = world(on, { preference: "on\n" });
     await $.session.start({ cwd: "/work", surface: "terminal", isInteractive: true });
     const raster = rasterOf(await $.ui.render(spinner("agent-main", { columns: 40, rows: 24 })))!;
@@ -92,7 +97,7 @@ describe("the working ship", () => {
     expect(journal.blits).toHaveLength(1);
   });
 
-  test("sizes to the raster limits: an unmeasured viewport reads as 80 columns, a wide one clips at 512, a narrow one falls back to one row", async ($, on) => {
+  boatTest("sizes to the raster limits: an unmeasured viewport reads as 80 columns, a wide one clips at 512, a narrow one falls back to one row", async ($, on) => {
     world(on, { preference: "on\n" });
     expect(rasterOf(await $.ui.render(unmeasuredSpinner("a")))!.columns).toBe(78);
     expect(rasterOf(await $.ui.render(spinner("b", { columns: 900, rows: 40 })))!.columns).toBe(512);
@@ -106,7 +111,7 @@ describe("the working ship", () => {
     expect(decodeCells(tiny.cells, 1, 1).glyphs[0]).toMatch(/^[▁▂▃▄]$/);
   });
 
-  test("reflows to a new width on the redraw a resize causes, and blits at that width from then on", async ($, on) => {
+  boatTest("reflows to a new width on the redraw a resize causes, and blits at that width from then on", async ($, on) => {
     const { clock, journal } = world(on, { preference: "on\n" });
     await $.session.start({ cwd: "/work", surface: "terminal", isInteractive: true });
     await $.ui.render(spinner("agent-main", { columns: 80, rows: 24 }));
@@ -128,7 +133,7 @@ describe("the working ship", () => {
     expect(journal.blits).toHaveLength(0);
   });
 
-  test("paints the light theme family's spinner blue for the water and the same Claude orange boat", async ($, on) => {
+  boatTest("paints the light theme family's spinner blue for the water and the same Claude orange boat", async ($, on) => {
     world(on, { preference: "on\n", theme: "light" });
     const raster = rasterOf(await $.ui.render(spinner("agent-main", { columns: 40, rows: 24 })))!;
     const { foregrounds } = decodeCells(raster.cells, 38, 2);
@@ -146,7 +151,7 @@ describe("the working ship", () => {
     ["auto", LIGHT_WATER, "light"],
     ["custom:rose-pine", LIGHT_WATER, "light"],
   ] as const) {
-    test(`paints the ${family} family for the theme value ${JSON.stringify(theme)}`, async ($, on) => {
+    boatTest(`paints the ${family} family for the theme value ${JSON.stringify(theme)}`, async ($, on) => {
       world(on, { preference: "on\n", theme });
       const raster = rasterOf(await $.ui.render(spinner("agent-main", { columns: 40, rows: 24 })))!;
       const { foregrounds } = decodeCells(raster.cells, 38, 2);
@@ -155,7 +160,7 @@ describe("the working ship", () => {
     });
   }
 
-  test("re-paints in the new family after the theme changes, through the next drawing and every later blit", async ($, on) => {
+  boatTest("re-paints in the new family after the theme changes, through the next drawing and every later blit", async ($, on) => {
     const { clock, journal } = world(on, { preference: "on\n", theme: "dark" });
     await $.session.start({ cwd: "/work", surface: "terminal", isInteractive: true });
     await $.ui.render(spinner("agent-main", { columns: 40, rows: 24 }));
@@ -184,5 +189,20 @@ describe("the working ship", () => {
     await $.command.run(calmCommand());
     const raster = rasterOf(await $.ui.render(spinner("agent-main", { columns: 40, rows: 24 })))!;
     expect(decodeCells(raster.cells, 38, 2).foregrounds[1]!.at(-1)).toBe(LIGHT_WATER);
+  });
+});
+
+describe("the working dog", () => {
+  test("walks a three-row gray dog in the boat's place, one column every second tick", async ($, on) => {
+    const { clock, journal } = world(on, { preference: "on\n" });
+    await $.session.start({ cwd: "/work", surface: "terminal", isInteractive: true });
+    const raster = rasterOf(await $.ui.render(spinner("agent-main", { columns: 40, rows: 24 })))!;
+    expect(raster).toMatchObject({ key: "firstmate-calm-working-ship", columns: 38, rows: 3 });
+    const first = decodeCells(raster.cells, 38, 3);
+    expect(first.glyphs[0]![0]).toBe("▄");
+    expect(first.foregrounds.flat().every((c) => [DEFAULT, 0xdedede, 0x8e8e8e, 0x262626].includes(c))).toBe(true);
+    await clock.advance(TICK * 2);
+    const moved = decodeCells(journal.blits[1]!.cells, 38, 3);
+    expect(moved.glyphs[0]!.slice(0, 2)).toBe(" ▄");
   });
 });

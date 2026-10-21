@@ -42,11 +42,13 @@
 // A drawing waits at most LOAD_WAIT_MS: waiting on another dispatch's load spends its own
 // budget, and a resume can hold the load past it; the load's closing invalidation redraws.
 // Each `session.start` clears presentation classifications and reloads the new session.
+import { atom, read, update } from "claude-code";
 import type { EngineInterface, Register, RenderElement, RenderInput } from "claude-code";
 import {
   CALM_WORKING_SHIP_TICK_MS,
   createCalmWorkingShipSprite,
 } from "../lib/fm-calm-working-ship-sprite.ts";
+import { createPet, PET_ROWS, PET_WIDTH, SHOW_BOAT } from "../lib/fm-calm-pet.ts";
 import {
   CALM_SHIP_RASTER_KEY,
   CALM_SHIP_RASTER_PALETTES,
@@ -102,10 +104,31 @@ const finalReplies = new Set<string>();
 // but pruned after seven days, so every invalidation drops the cache and rechecks.
 const doorbellVerdicts = new Map<string, Promise<boolean>>();
 const sprite = createCalmWorkingShipSprite();
+const pet = createPet();
+
+/** The working row's cells: the boat, or the walking dog in its place. */
+function workingCells(columns: number): { rows: number; cells: string } {
+  return SHOW_BOAT ? packCalmShipRasterCells(sprite.frame(columns), columns, palette) : pet.cells(columns);
+}
 let palette: CalmShipRasterPalette = CALM_SHIP_RASTER_PALETTES.light;
 // Every Spinner site currently drawing the boat, by its requestId, with the mounted
 // Raster size a blit must repeat exactly.
-const sites = new Map<string, { columns: number; rows: number }>();
+const sites = new Map<string, { columns: number; rows: number; sit?: boolean }>();
+// Local change (2026-10-21, user: "백그라운드 조사 결과 기다릴 때도 강아지같은걸로"): how many background
+// subagents the main loop started are still at work. While the main loop is idle and any are, the
+// dog sits above the prompt wagging its tail; it is gone when they finish or a turn starts.
+const bgAgents = atom({ plugin: "fm", key: "bgAgents" } as const, 0);
+const BG_POLL_MS = 2000;
+
+async function countBackground($: EngineInterface): Promise<void> {
+  let n: number;
+  try {
+    n = (await $.agent.list()).filter((a) => a.parentId === undefined && (a.status === "running" || a.status === "pending")).length;
+  } catch {
+    return;
+  }
+  if (n !== (await read($, bgAgents))) await update($, bgAgents, () => n);
+}
 /** How often the supervision notes check the store's tail copy and the host's latch. */
 const BRANCH_NOTES_POLL_MS = 3000;
 /**
@@ -184,6 +207,7 @@ async function load($: EngineInterface): Promise<void> {
     ticker = $.clock.every(CALM_WORKING_SHIP_TICK_MS, () => {
       void repaintShip($);
     });
+    $.clock.every(BG_POLL_MS, () => void countBackground($));
   }
   loaded = true;
   invalidateDrawings($);
@@ -212,6 +236,7 @@ async function resetSession($: EngineInterface): Promise<void> {
   doorbellVerdicts.clear();
   sites.clear();
   sprite.reset();
+  pet.reset();
   palette = CALM_SHIP_RASTER_PALETTES.light;
   await ensureLoaded($);
 }
@@ -225,9 +250,10 @@ function invalidateDrawings($: EngineInterface): void {
 /** One scheduler tick: advance the sprite, then repaint every mounted boat in place. */
 async function repaintShip($: EngineInterface): Promise<void> {
   if (!calm || sites.size === 0) return;
-  sprite.tick();
+  if (SHOW_BOAT) sprite.tick();
+  pet.tick();
   for (const [requestId, site] of sites) {
-    const packed = packCalmShipRasterCells(sprite.frame(site.columns), site.columns, palette);
+    const packed = site.sit ? pet.sitting() : workingCells(site.columns);
     const result = await $.ui.blit({
       requestId,
       key: CALM_SHIP_RASTER_KEY,
@@ -475,13 +501,38 @@ export const register: Register = (on) => {
       return next(e);
     }
     const columns = calmShipRasterColumns(e.viewport?.columns);
-    const packed = packCalmShipRasterCells(sprite.frame(columns), columns, palette);
+    const packed = workingCells(columns);
     sites.set(e.requestId, { columns, rows: packed.rows });
     const { Box, Raster } = $.ui.resolve(e);
     return Box({
       flexDirection: "column",
       children: Raster({ key: CALM_SHIP_RASTER_KEY, columns, rows: packed.rows, cells: packed.cells }),
     });
+  });
+
+  // Local change (2026-10-21): the waiting dog, above whatever the other mods draw there.
+  on("ui.render", { component: "AbovePrompt" }, async ($, e, next) => {
+    if (!(await isActivated($))) return next(e);
+    await awaitLoad($, next.signal);
+    const n = await read($, bgAgents);
+    if (!calm || n === 0 || e.props.isWorking || e.props.hasSurvey || e.surface !== "terminal") {
+      sites.delete(e.requestId);
+      return next(e);
+    }
+    const below = await next(e);
+    const packed = pet.sitting();
+    sites.set(e.requestId, { columns: PET_WIDTH, rows: PET_ROWS, sit: true });
+    const { Box, Raster, Text } = $.ui.resolve(e);
+    const dog = Box({
+      key: "fm-waiting-dog",
+      flexDirection: "row",
+      marginLeft: 2,
+      children: [
+        Raster({ key: CALM_SHIP_RASTER_KEY, columns: PET_WIDTH, rows: PET_ROWS, cells: packed.cells }),
+        Box({ flexDirection: "column", marginLeft: 2, marginTop: 2, children: Text({ dimColor: true, children: `조사 ${n}개 기다리는 중` }) }),
+      ],
+    });
+    return below ? Box({ flexDirection: "column", children: [dog, below] }) : dog;
   });
 
   on("ui.render", { component: "ToolUse" }, async ($, e, next) => {

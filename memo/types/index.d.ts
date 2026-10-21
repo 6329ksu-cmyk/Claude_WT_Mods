@@ -64,7 +64,6 @@ declare module 'claude-code' {
       asked: string[]
       showAsked: boolean
       meter: Meter | null
-      minute: number
       whyOpen: boolean
       brief: Brief | null
     }

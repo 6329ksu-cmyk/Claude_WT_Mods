@@ -24,6 +24,8 @@ const disk = (on: On, sid = () => 'S1') => {
     }
   })
   on('session.surfaces', () => ({ value: ['terminal' as const] }))
+  // 엔진 쪽 그림(메뉴판 아래에 붙는 다른 mod·엔진 몫)은 비어 있다
+  on('ui.render', ($: any, e: any) => $.ui.resolve(e).Box({ children: [] }))
   return files
 }
 
@@ -587,7 +589,7 @@ test('세션 칸 줄 끝에 그 세션이 하던 일: 흐름 요약의 기다리
   expect(colOf(a, '—')).toBe(colOf(c, '—'))
 })
 
-test('사용량 줄: 맨 아래에 5h·주 한도·대화칸·모델·effort·세션을 한 줄로, 90% 넘으면 한도마다 한 번 알린다', async ($, on) => {
+test('사용량: ⏱ 줄은 그리지 않고(token-weather-usage로 바꿈), 90% 넘으면 한도마다 한 번 알린다', async ($, on) => {
   disk(on)
   // 30초 여유: 분 단위로 내림해도 1h40·1h05로 보인다
   const soon = (min: number) => new Date(Date.now() + min * 60_000 + 30_000).toISOString()
@@ -619,18 +621,15 @@ test('사용량 줄: 맨 아래에 5h·주 한도·대화칸·모델·effort·�
 
   const ui = await $.ui.mount({ plugin: 'memo', surface: 'terminal', ...BAND })
   const line = async () => (await ui.find({ type: 'Text', text: /^⏱/ }))?.text
-  expect(await line()).toBe('⏱ 5h ███░░ 63% · 1h40 남음 · 주 █▌░░░ 31% · 대화칸 21% · Opus 5.5 XHIGH · S1')
-  // 칸을 열어도 남는다
-  await ui.press({ key: 'tab-session' })
-  expect(await line()).toBeDefined()
+  expect(await line()).toBeUndefined()
+  // 모델·effort는 메뉴판 '모델' 칸에
+  expect(await ui.find({ type: 'Text', text: 'Opus 5.5 XHIGH' })).toBeDefined()
 
   const measure = (percentUsed: number, min: number) =>
     $.session.measure({ context: { window: 1_000_000, percent: 22 }, rateLimits: [{ kind: 'five_hour', percentUsed, resetsAt: soon(min) }], changed: ['rateLimits'] })
   await measure(92, 65)
   await measure(93, 64)
   expect(toasts).toEqual(['5h 한도 92% — 1h05 뒤 초기화'])
-  await ui.redraw()
-  expect(await line()).toMatch(/^⏱ 5h ████▌ 93% · 1h04 남음 · 대화칸 22%/)
   // 초기화되어 내려갔다가 다시 넘으면 또 알린다
   await measure(5, 300)
   await measure(91, 30)

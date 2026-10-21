@@ -6,12 +6,12 @@
       "name": "memo",
       "source": "./memo",
       "dependencies": ["fm"],
-      "description": "입력창 위 메뉴판: 메모(전역·세션·기한), 흐름 요약과 내 질문 바로가기, 세션 칸, ⏱ 사용량 줄"
+      "description": "입력창 위 메뉴판: 메모(전역·세션·기한), 흐름 요약과 내 질문 바로가기, 세션 칸, 모델 칸"
     },
     {
       "name": "fm",
       "source": "./firstmate-calm",
-      "description": "Firstmate Calm: 도구 줄을 감추고 작업 중 표시를 돛단배로 (kunchenguid/firstmate, MIT)"
+      "description": "Firstmate Calm: 도구 줄을 감추고 작업 중 표시를 회색 강아지로 (kunchenguid/firstmate, MIT)"
     },
     {
       "name": "slash-ko",
