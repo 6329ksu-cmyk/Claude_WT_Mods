@@ -16,10 +16,16 @@
 시간은 파일 수정 시각이 아니라 기록 안의 마지막 시각으로 본다(Codex는 수정 시각이 늦게 바뀜).
 같은 첫 질문으로 갈라진 사본은 가장 최근 것만, Codex 하위 agent는 빼고 본다. agy는 아직 포함하지 않는다.
 기록 파일은 앞(첫 질문·폴더)과 뒤(마지막 질문·답)만 읽는다. 한 달치도 수 초 안에 끝나게 하려는 것이다.
+Mac(2026-10-21): 실행 중 판정은 ps로, 여는 곳은 Orca 안이면 Orca 새 탭, 아니면 터미널(Terminal.app) 새 창이다.
 """
-import glob, json, mmap, os, re, subprocess, sys, time
+import glob, json, mmap, os, re, shlex, subprocess, sys, tempfile, time
 from datetime import datetime
 from pathlib import PureWindowsPath
+
+WINDOWS = os.name == "nt"
+ORCA = "/Applications/Orca.app/Contents/Resources/bin/orca"
+# 명령 안 따옴표 속 절대경로: Windows는 C:\·/c/(Git Bash), Mac은 흔한 최상위 폴더와 ~/
+ABS_PATH = r"[A-Za-z]:[\\/]|/[a-zA-Z]/" if WINDOWS else r"/(?:Users|Volumes|private|tmp|opt|Applications|Library)/|~/"
 
 HOME = os.path.expanduser("~")
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
@@ -97,6 +103,12 @@ def recent_context(lines, tool, cwd):
         if not isinstance(value, str) or not value.strip() or "://" in value:
             return
         value = value.strip()
+        if not WINDOWS:  # Mac: Windows 경로로 읽으면 /Users/… 가 \Users\… 로 바뀐다
+            p = os.path.normpath(os.path.join(base or HOME, os.path.expanduser(value)))
+            remember(files, p)
+            if modified:
+                remember(changed, p)
+            return
         unc = value.startswith("\\\\")
         value = re.sub(r"\\+", r"\\", value)
         if unc:
@@ -129,7 +141,7 @@ def recent_context(lines, tool, cwd):
             for match in re.finditer(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", value, re.M):
                 path(match.group(1), base, True)
             # 명령 전체 대신 따옴표 안의 절대경로만 근거로 남긴다.
-            for match in re.finditer(r"[\"']((?:[A-Za-z]:[\\/]|/[a-zA-Z]/)[^\"'\r\n]+)[\"']", value):
+            for match in re.finditer(r"[\"']((?:" + ABS_PATH + r")[^\"'\r\n]+)[\"']", value):
                 path(match.group(1), base)
 
     for d in jsonl(lines):
@@ -340,17 +352,41 @@ def name_of(s, labels):
         or one_line(re.sub(UUID, "", s["first"]), 12)
 
 
+def processes():
+    """(claude 프로세스 pid 모음, 'name|시작 시각(초)|명령줄' 줄들). Windows는 PowerShell, Mac은 ps로 읽는다(2026-10-21).
+    Mac에서 PowerShell을 부르면 프로그램이 없어 세션 칸 전체가 멈췄다."""
+    if WINDOWS:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                              "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "  # 명령줄의 한글 첫 질문이 깨지지 않게
+                              "(Get-Process claude -ea 0).Id -join ','; "
+                              "Get-CimInstance Win32_Process | ? { $_.Name -match '^(codex|node|claude)' } | "
+                              "% { '{0}|{1}|{2}' -f $_.Name, ([DateTimeOffset]$_.CreationDate).ToUnixTimeSeconds(), $_.CommandLine }"],
+                             capture_output=True, text=True, encoding="utf-8", errors="ignore").stdout
+        first, _, rest = out.partition("\n")
+        return {int(p) for p in first.split(",") if p.strip().isdigit()}, rest
+    out = subprocess.run(["ps", "-axww", "-o", "pid=,lstart=,args="], capture_output=True, text=True,
+                         errors="ignore", env=dict(os.environ, LC_ALL="C")).stdout
+    pids, rows = set(), []
+    for line in out.splitlines():
+        parts = line.split(None, 6)  # pid, 시작 시각 다섯 칸(Wed Oct 14 10:39:36 2026), 명령줄
+        if len(parts) < 7 or not parts[0].isdigit():
+            continue
+        try:
+            start = int(time.mktime(time.strptime(" ".join(parts[1:6]), "%a %b %d %H:%M:%S %Y")))
+        except ValueError:
+            continue
+        name = os.path.basename(parts[6].split()[0])
+        if name == "claude":
+            pids.add(int(parts[0]))
+        if re.match(r"(codex|node|claude)", name):
+            rows.append(f"{name}|{start}|{parts[6]}")
+    return pids, "\n".join(rows)
+
+
 def live_ids():
     """지금 실행 중인 세션 id. Claude는 ~/.claude/sessions/<pid>.json(살아 있는 pid만), resume은 Claude·Codex 모두 프로세스 명령줄에서 찾는다.
     Claude resume 탭은 시작 화면에서 멈추면 sessions/<pid>.json이 안 생겨 꺼짐으로 보였다(2026-10-08)."""
-    out = subprocess.run(["powershell", "-NoProfile", "-Command",
-                          "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "  # 명령줄의 한글 첫 질문이 깨지지 않게
-                          "(Get-Process claude -ea 0).Id -join ','; "
-                          "Get-CimInstance Win32_Process | ? { $_.Name -match '^(codex|node|claude)' } | "
-                          "% { '{0}|{1}|{2}' -f $_.Name, ([DateTimeOffset]$_.CreationDate).ToUnixTimeSeconds(), $_.CommandLine }"],
-                         capture_output=True, text=True, encoding="utf-8", errors="ignore").stdout
-    first, _, rest = out.partition("\n")
-    pids = {int(p) for p in first.split(",") if p.strip().isdigit()}
+    pids, rest = processes()
     ids = set(re.findall(UUID, rest))
     for f in glob.glob(HOME + "/.claude/sessions/*.json"):
         try:
@@ -367,12 +403,13 @@ def new_codex_ids(procs, live):
     그 프로세스가 시작한 뒤 처음 생긴 Codex 세션을 그 탭 것으로 본다. Codex id 앞 48비트가 세션을 만든 시각(ms)이다.
     명령줄에 첫 질문이 있으면 그 질문으로 시작한 세션을 먼저 고른다(1초 차로 생긴 두 세션을 시각만으로는 못 가렸다).
     첫 질문 없이 열어 둔 세션도 후보에 넣는다: 빼면 그 탭이 다음 세션(이미 꺼진 것)을 가져가 '실행 중'으로 잘못 보였다(2026-10-12).
-    터미널 탭(npm으로 설치한 codex)만 센다: ChatGPT 앱이 띄운 codex·하위 agent 기록(부모_자식 이름)은 뺀다."""
+    터미널 탭(npm으로 설치한 codex)만 센다: ChatGPT 앱이 띄운 codex·하위 agent 기록(부모_자식 이름)은 뺀다.
+    Mac은 프로그램 이름이 codex(.exe 없음), 경로 구분이 /다(2026-10-21)."""
     starts = []
     for line in procs.splitlines():
         name, _, rest = line.partition("|")
         t, _, cmd = rest.partition("|")
-        if name.lower() == "codex.exe" and t.isdigit() and "node_modules\\@openai\\codex" in cmd \
+        if name.lower() in ("codex.exe", "codex") and t.isdigit() and re.search(r"node_modules[\\/]@openai[\\/]codex", cmd) \
                 and not re.search(UUID + r"|app-server|managed-daemon|\bexec\b", cmd):
             starts.append((int(t), " ".join(cmd.split())))
     if not starts:
@@ -701,6 +738,8 @@ def open_tabs(chosen, live, labels, confirm=False):
     if not chosen:
         print("\n열 세션이 없습니다. +24처럼 시간을 늘려 보세요.")
         return 0, skipped
+    if not WINDOWS:
+        return open_mac(chosen, labels, confirm), skipped
     wt = ["wt", "-w", "restore"]
     for s in chosen:
         # 사용자가 평소 쓰는 '명령 프롬프트' 프로필로 연다(PowerShell 탭은 싫어함, 2026-10-02).
@@ -716,6 +755,40 @@ def open_tabs(chosen, live, labels, confirm=False):
     if confirm:
         confirm_opened(chosen, labels, since)
     return len(chosen), skipped
+
+
+def open_mac(chosen, labels, confirm=False):
+    """Mac(2026-10-21): Orca 안에서 부르면 Orca 새 탭(그 세션 폴더의 작업 공간, 없으면 지금 보는 곳)에, 아니면 터미널(Terminal.app) 새 창에 연다.
+    새 탭의 셸은 Orca·터미널이 띄우므로 이 프로세스의 CLAUDE_* 환경변수가 넘어가지 않는다(넘어가면 대화가 저장되지 않는다). 연 개수를 돌려준다."""
+    orca = os.path.join(os.environ.get("ORCA_CLI_BIN_DIR") or os.path.dirname(ORCA), "orca")
+    in_orca = os.environ.get("TERM_PROGRAM") == "Orca" and os.path.exists(orca)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
+    since, opened = time.time(), []
+    for s in chosen:
+        line = f"cd {shlex.quote(s.get('cwd') or HOME)} && {s['cmd']}"
+        try:
+            if in_orca:
+                ok = any(subprocess.run([orca, "terminal", "create", "--worktree", where, "--command", line, "--json"],
+                                        capture_output=True, text=True, env=env, timeout=30).returncode == 0
+                         for where in (f"path:{s.get('cwd') or HOME}", "active"))
+            else:
+                script = os.path.join(tempfile.mkdtemp(prefix="memo-open-"), "open.command")
+                with open(script, "w", encoding="utf-8") as h:
+                    h.write(f"#!/bin/zsh -l\n{line}\n")
+                os.chmod(script, 0o755)
+                ok = subprocess.run(["open", "-a", "Terminal", script], env=env, timeout=30).returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            ok = False
+        if ok:
+            opened.append(s)
+        else:
+            print(f"열지 못함: {name_of(s, labels)}")
+    if opened:
+        remember_opened(opened, labels)
+        print(f"\n{len(opened)}개 세션을 {'Orca 새 탭' if in_orca else '터미널 새 창'}으로 열었습니다.", flush=True)
+        if confirm:
+            confirm_opened(opened, labels, since)
+    return len(opened)
 
 
 def row_json(s, live, labels):

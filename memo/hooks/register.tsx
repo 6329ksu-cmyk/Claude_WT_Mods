@@ -160,9 +160,24 @@ const counts = (v: View) => `이 세션 ${v.list.length}건·전역 ${v.globals.
 const kindOf = (extra: Pick<Memo, 'global' | 'due'>) => (extra.due ? `기한(${extra.due})` : extra.global ? '전역' : '이 세션')
 
 // 이 PC 원본(~/.claude 아래)이 있으면 그것을, 없으면(GitHub로 설치한 다른 PC) mod에 함께 담긴 scripts/ 사본을 쓴다.
-// Python은 3.12 기본 설치 자리, 없으면 py 런처
+// Python은 3.12 기본 설치 자리, 없으면 py 런처.
+// Mac(10-21): 홈이 C:\가 아니면 / 경로와 Homebrew python3(없으면 시스템 python3)로 부른다. 전에는 py를 못 찾아 세션 칸이 '불러오는 중…'에 멈췄다
+const MAC_PYTHON = ['/opt/homebrew/bin/python3', '/usr/local/bin/python3', '/usr/bin/python3']
 const python = async ($: EngineInterface, script: string, ...args: string[]) => {
   const h = await home($)
+  if (!/^[A-Za-z]:[\\/]/.test(h ?? '')) {
+    const rel = script.replace(/\\/g, '/')
+    const mine = `${h}/.claude/${rel}`
+    const path = (await $.fs.exists(mine)) ? mine : `${$.plugin.root}/scripts/${rel.split('/').pop()}`
+    let exe = 'python3'
+    for (const p of MAC_PYTHON) {
+      if (await $.fs.exists(p)) {
+        exe = p
+        break
+      }
+    }
+    return $.process.run([exe, path, ...args], { env: { PYTHONUTF8: '1' }, timeoutMs: 60_000 })
+  }
   const own = `${h}\\.claude\\${script}`
   const file = (await $.fs.exists(own)) ? own : `${$.plugin.root}\\scripts\\${script.split('\\').pop()}`
   const exe = `${h}\\AppData\\Local\\Programs\\Python\\Python312\\python.exe`

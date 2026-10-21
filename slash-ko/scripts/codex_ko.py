@@ -7,6 +7,7 @@ SKILL.md 앞머리의 metadata.short-description(화면에만 보이는 설명)�
 
   python codex_ko.py          적용
   python codex_ko.py --dry    바꿀 것만 보기
+Mac은 python 대신 python3(Homebrew, PyYAML 있음)로 부른다.
 """
 
 import json
@@ -34,10 +35,24 @@ ASK = """Claude Code 슬래시(/) 메뉴에 뜰 명령 설명을 한국어로 �
 """
 
 
+LINKED = []
+
+
 def skill_files():
+    """두 폴더의 SKILL.md. 링크로 다른 곳(스킬 저장소·Claude 플러그인 캐시)에 이어진 스킬은 건너뛴다:
+    고치면 그 저장소·캐시 파일이 바뀐다(Mac은 대부분이 링크, 2026-10-21). 두 폴더가 같은 파일을 가리키면 한 번만 본다."""
+    roots = [r.resolve() for r in ROOTS if r.exists()]
+    seen = set()
     for root in ROOTS:
-        yield from sorted(root.glob('*/SKILL.md'))
-        yield from sorted(root.glob('.system/*/SKILL.md'))
+        for f in [*sorted(root.glob('*/SKILL.md')), *sorted(root.glob('.system/*/SKILL.md'))]:
+            real = f.resolve()
+            if real in seen:
+                continue
+            seen.add(real)
+            if not any(real.is_relative_to(r) for r in roots):
+                LINKED.append(f.parent.name)
+                continue
+            yield f
 
 
 def lookup(data, name, desc):
@@ -122,7 +137,10 @@ def main():
                 skipped.append(f'{name} (번역 없음)')
             continue
         head = with_short(m.group(2), ko)
-        check = yaml.safe_load(head + '\n') or {}
+        try:  # 끼워 넣은 앞머리가 YAML로 안 읽히면(metadata 아래 깊은 칸이 있는 스킬) 멈추지 말고 건너뛴다(2026-10-21 agent-reach)
+            check = yaml.safe_load(head + '\n') or {}
+        except yaml.YAMLError:
+            check = {}
         if check.get('description') != meta.get('description') or (check.get('metadata') or {}).get('short-description') != ko:
             skipped.append(f'{name} (앞머리 모양이 달라 안 건드림)')
             continue
@@ -141,6 +159,8 @@ def main():
         print(f'\n번역 새로 필요 {len(missing)}개: {", ".join(missing)}')
     if skipped:
         print(f'\n건너뜀 {len(skipped)}개: {", ".join(skipped)}')
+    if LINKED:
+        print(f'\n다른 저장소·캐시로 이어진 링크라 안 건드림 {len(LINKED)}개: {", ".join(LINKED)}')
 
 
 if __name__ == '__main__':

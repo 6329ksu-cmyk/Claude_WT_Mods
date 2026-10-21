@@ -39,7 +39,10 @@ def tab_key(name):
 
 
 def window_of_tabs():
-    """탭 이름 → 창 번호(왼쪽 창부터 1, 최소화한 창은 뒤). 창이 하나뿐이면 번호가 쓸모없어 빈 dict, 못 읽어도 빈 dict"""
+    """탭 이름 → 창 번호(왼쪽 창부터 1, 최소화한 창은 뒤). 창이 하나뿐이면 번호가 쓸모없어 빈 dict, 못 읽어도 빈 dict.
+    Mac(Orca·터미널)은 Windows Terminal이 없어 바로 빈 dict(2026-10-21)"""
+    if os.name != "nt":
+        return {}
     try:
         out = subprocess.run(["powershell", "-NoProfile", "-Command", WIN_PS], capture_output=True, text=True,
                              encoding="utf-8", errors="ignore", timeout=20).stdout

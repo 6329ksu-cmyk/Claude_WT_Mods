@@ -340,6 +340,40 @@ test('세션 칸 [더 보기]는 desk_json.py를 72시간으로 다시 읽고, [
   expect(await rowOrder(ui)).toEqual(['S1'])
 })
 
+test('Mac(홈이 /…)에서는 세션 칸이 Homebrew python3로 / 경로의 desk_json.py를 부르고, 없으면 시스템 python3', async ($, on) => {
+  const files = new Map<string, string>()
+  let brew = true
+  mock.env(on, { HOME: '/Users/me' })
+  on('session.id', () => ({ value: 'S1' }))
+  const unix = (p: string) => p.replace(/\\/g, '/')
+  on('fs.exists', ($, e) => ({ value: (brew && unix(e.path).endsWith('/opt/homebrew/bin/python3')) || unix(e.path).endsWith('/usr/bin/python3') || files.has(e.path) }))
+  on('fs.read', ($, e) => ({ value: files.get(e.path) ?? '' }))
+  on('fs.write', ($, e) => {
+    files.set(e.path, e.text)
+    return { value: undefined }
+  })
+  on('fs.list', () => ({ value: [] }))
+  on('session.surfaces', () => ({ value: ['terminal' as const] }))
+  on('ui.render', ($: any, e: any) => $.ui.resolve(e).Box({ children: [] }))
+  const ran: string[][] = []
+  on('process.run', ($, e) => {
+    ran.push([...e.argv])
+    if (e.argv.includes('--keep')) return { value: { exitCode: 0, stdout: '킵으로 표시: Memo (S1)\n', stderr: '' } }
+    return { value: { exitCode: 0, stdout: JSON.stringify([{ id: 'S1', tool: 'claude', name: 'Memo', live: true, state: '', last: '10-21 20:00' }]), stderr: '' } }
+  })
+  const ui = await $.ui.mount({ plugin: 'memo', surface: 'terminal', ...BAND })
+  await ui.press({ key: 'tab-desk' })
+  expect(ran[0]![0]).toBe('/opt/homebrew/bin/python3')
+  expect(ran[0]![1]).toMatch(/\/scripts\/desk_json\.py$/)
+  expect(await rowOrder(ui)).toEqual(['S1'])
+
+  brew = false
+  await ui.press({ key: 'keep-S1' })
+  expect(ran.at(-1)![0]).toBe('/usr/bin/python3')
+  expect(ran.at(-1)!.at(-3)).toMatch(/\/scripts\/recent_sessions\.py$/)
+  expect(ran.at(-1)!.slice(-2)).toEqual(['--keep', 'S1'])
+})
+
 test('같은 탭에서 세션 번호가 바뀌면 5초 안에 그 세션 메모로 다시 그린다', async ($, on) => {
   let sid = 'S0'
   const files = disk(on, () => sid)

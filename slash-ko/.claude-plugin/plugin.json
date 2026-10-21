@@ -1,5 +1,5 @@
 {
   "name": "slash-ko",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "슬래시(/) 메뉴의 명령·스킬 설명을 한국어 한 줄로 바꿔 보여준다. 번역은 slash-ko-data.json에 저장해 다시 쓴다."
 }

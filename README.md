@@ -1,6 +1,6 @@
 # Claude_WT_Mods
 
-Windows Terminal에서 쓰는 Claude Code mods 여섯 개: `memo`(메뉴판), `fm`(작업 중 강아지), `slash-ko`(슬래시 메뉴 한국어), `aside`(옆 질문 창), `watchdog`(답 검사), `token-weather-usage`(사용량 날씨 줄).
+Windows Terminal과 Mac(Orca·터미널)에서 쓰는 Claude Code mods 여섯 개: `memo`(메뉴판), `fm`(작업 중 강아지), `slash-ko`(슬래시 메뉴 한국어), `aside`(옆 질문 창), `watchdog`(답 검사), `token-weather-usage`(사용량 날씨 줄).
 
 ## 설치
 
@@ -45,14 +45,16 @@ claude plugin enable cc-plugin-you-should-know@builtin
 ## slash-ko가 쓰는 것
 
 - 번역 사전: `~/.claude/mods/slash-ko-data.json` (`{명령: {en, ko}}`). `ko`를 손으로 고치면 원문이 바뀔 때까지 그 문구를 쓴다. 새 스킬·바뀐 설명만 다시 번역한다
-- Codex: mod 기능이 없어 스킬 파일의 화면용 설명(`metadata.short-description`)을 채우는 스크립트를 함께 둔다. `~/.codex/skills`·`~/.agents/skills`의 SKILL.md를 고치며(원본은 `~/.claude/mods/_backup/codex-skills-before-ko/`), 스킬이 업데이트돼 영어로 돌아가면 다시 돌린다. Python 3·PyYAML, 사전에 없는 것은 `claude -p`로 번역. Codex 기본 명령(`/compact` 등)은 못 바꾼다
+- Codex: mod 기능이 없어 스킬 파일의 화면용 설명(`metadata.short-description`)을 채우는 스크립트를 함께 둔다. `~/.codex/skills`·`~/.agents/skills`의 SKILL.md를 고치며(원본은 `~/.claude/mods/_backup/codex-skills-before-ko/`), 스킬이 업데이트돼 영어로 돌아가면 다시 돌린다. 다른 저장소·플러그인 캐시로 이어진 링크 스킬은 그 파일이 바뀌니 건너뛴다(Mac은 대부분이 링크). Python 3·PyYAML(Mac은 Homebrew `python3`), 사전에 없는 것은 `claude -p`로 번역. Codex 기본 명령(`/compact` 등)은 못 바꾼다
 
 ```
-python slash-ko/scripts/codex_ko.py --dry   # 바꿀 것만 보기
+python slash-ko/scripts/codex_ko.py --dry   # 바꿀 것만 보기 (Mac은 python3)
 python slash-ko/scripts/codex_ko.py         # 적용
 ```
 
 ## memo가 쓰는 것
 
 - 메모·흐름·상태 파일: `~/.claude/mods/memo-data.json`, `~/.claude/mods/memo-flow/`, `~/.claude/mods/memo-live/` (없으면 만든다)
-- 세션 칸: Windows, Python 3(`%LOCALAPPDATA%\Programs\Python\Python312` 또는 `py` 런처), [열기]는 Windows Terminal. 스크립트는 `memo/scripts/`에 함께 있다
+- 세션 칸: 스크립트는 `memo/scripts/`에 함께 있다
+  - Windows: Python 3(`%LOCALAPPDATA%\Programs\Python\Python312` 또는 `py` 런처), 실행 중 판정은 PowerShell, [열기]는 Windows Terminal
+  - Mac: Homebrew `python3`(없으면 `/usr/bin/python3`), 실행 중 판정은 `ps`, [열기]는 Orca 안이면 Orca 새 탭, 아니면 터미널(Terminal.app) 새 창. 창 번호는 Windows Terminal에만 있다
