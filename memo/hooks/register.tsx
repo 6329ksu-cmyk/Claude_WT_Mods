@@ -504,7 +504,7 @@ const showPeers = async ($: EngineInterface) => {
   void attachDoing($).catch(() => undefined)
 }
 
-// 사용량(2026-10-19 statusline 대신 mod로). 10-21 ⏱ 줄은 token-weather-usage mod 줄로 바꿔, 여기선 메뉴판 '모델' 칸과 90% 한도 알림만 쓴다
+// 사용량(2026-10-19 statusline 대신 mod로). 10-21 ⏱ 줄은 token-weather-usage mod 줄로 바꿔, 여기선 메뉴판 '모델'·'컨텍스트' 칸과 90% 한도 알림만 쓴다
 const meter = atom({ plugin: 'memo', key: 'meter' } as const, null as Meter | null)
 const WARN_AT = 90
 const LIMIT_NAME: Record<string, string> = { five_hour: '5h', seven_day: '주' }
@@ -795,6 +795,8 @@ export const register: Register = on => {
     // 날씨 줄엔 모델·effort가 없어 메뉴판 맨 오른쪽 '모델' 칸에 둔다(10-21 사용자 "어떤 모델 어떤 에포트인지")
     const m = await read($, meter)
     const modelText = m?.model ? `${modelName(m.model)} ${m.effort.toUpperCase()}`.trim() : ''
+    // 날씨 줄은 컨텍스트를 토큰 수로만 보여 준다(%는 터미널에서 못 여는 hover 카드에). 그래서 % 칸을 둔다(10-22 사용자 "컨텍스트 몇퍼나 찼는지")
+    const ctxText = m?.ctx === undefined ? '' : `${Math.round(m.ctx)}%`
     const wrap = (top: RenderElement) => (below ? <Box flexDirection="column">{top}{below}</Box> : top)
     // 다른 세션 중 답을 기다리는 것: 세션 칸 줄에 쓴다
     const blocked = (await read($, peers)).filter(p => p.state === 'waiting')
@@ -843,6 +845,13 @@ export const register: Register = on => {
           <Box flexDirection="column">
             <Text dimColor>모델</Text>
             <Text>{modelText}</Text>
+          </Box>
+        ) : null}
+        {ctxText ? sep() : null}
+        {ctxText ? (
+          <Box flexDirection="column">
+            <Text dimColor>컨텍스트</Text>
+            <Text>{ctxText}</Text>
           </Box>
         ) : null}
       </Box>

@@ -35,7 +35,7 @@ claude plugin enable cc-plugin-you-should-know@builtin
 
 | mod | 하는 일 |
 |---|---|
-| `memo` | 입력창 위 메뉴판. 메모 칸(전역·세션·기한, "메모해"), 흐름 칸(목표·지금·다음 요약, 내 질문 번호로 그 자리 이동), 세션 칸(다른 Claude·Codex 세션 실행 중·꺼짐, 열기·끝·킵), 맨 오른쪽 모델 칸(모델·effort), 한도 90% 알림 |
+| `memo` | 입력창 위 메뉴판. 메모 칸(전역·세션·기한, "메모해"), 흐름 칸(목표·지금·다음 요약, 내 질문 번호로 그 자리 이동), 세션 칸(다른 Claude·Codex 세션 실행 중·꺼짐, 열기·끝·킵), 맨 오른쪽 모델·컨텍스트 칸(모델·effort, 컨텍스트 몇 % 찼는지), 한도 90% 알림 |
 | `fm` | [kunchenguid/firstmate](https://github.com/kunchenguid/firstmate)의 firstmate-calm. 도구 줄을 감추고, 작업 중 표시 자리에 회색 강아지(3줄)가 걸어 다닌다. 백그라운드 조사만 도는 동안은 입력창 위에 앉아 `조사 N개 기다리는 중`. 강아지는 [claude-pets](https://github.com/uppinote20/claude-pets)(MIT) 그림에서 시작. 돛단배로 되돌리려면 `lib/fm-calm-pet.ts`의 `SHOW_BOAT = true`. MIT, 로컬 수정은 `firstmate-calm/SOURCE.txt` |
 | `slash-ko` | `/`를 누르면 뜨는 명령·스킬 설명을 한국어 한 줄로. 처음 메뉴를 열 때 Haiku로 번역해 두고 다음부터는 저장본을 쓴다. AI가 스킬을 고를 때 읽는 목록은 영어 원문으로 되돌려 둔다 |
 | `aside` | [escapeboy/claude-code-kit](https://github.com/escapeboy/claude-code-kit)의 aside. `/aside`로 연 옆 창에서 이 대화를 아는 도구 없는 복제 AI가 답하고, 본 대화엔 남지 않는다. ✕·Esc로 닫는다. MIT, 한국어·답 모양 로컬 수정은 `aside/SOURCE.txt` |

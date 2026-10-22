@@ -623,7 +623,7 @@ test('세션 칸 줄 끝에 그 세션이 하던 일: 흐름 요약의 기다리
   expect(colOf(a, '—')).toBe(colOf(c, '—'))
 })
 
-test('사용량: ⏱ 줄은 그리지 않고(token-weather-usage로 바꿈), 90% 넘으면 한도마다 한 번 알린다', async ($, on) => {
+test('사용량: ⏱ 줄은 그리지 않고(token-weather-usage로 바꿈), 메뉴판에 모델·컨텍스트 %를 두고, 90% 넘으면 한도마다 한 번 알린다', async ($, on) => {
   disk(on)
   // 30초 여유: 분 단위로 내림해도 1h40·1h05로 보인다
   const soon = (min: number) => new Date(Date.now() + min * 60_000 + 30_000).toISOString()
@@ -658,10 +658,13 @@ test('사용량: ⏱ 줄은 그리지 않고(token-weather-usage로 바꿈), 90%
   expect(await line()).toBeUndefined()
   // 모델·effort는 메뉴판 '모델' 칸에
   expect(await ui.find({ type: 'Text', text: 'Opus 5.5 XHIGH' })).toBeDefined()
+  // 컨텍스트 %는 메뉴판 '컨텍스트' 칸에, 대화칸이 바뀌면 따라 바뀐다
+  expect(await ui.find({ type: 'Text', text: '21%' })).toBeDefined()
 
   const measure = (percentUsed: number, min: number) =>
     $.session.measure({ context: { window: 1_000_000, percent: 22 }, rateLimits: [{ kind: 'five_hour', percentUsed, resetsAt: soon(min) }], changed: ['rateLimits'] })
   await measure(92, 65)
+  expect(await ui.find({ type: 'Text', text: '22%' })).toBeDefined()
   await measure(93, 64)
   expect(toasts).toEqual(['5h 한도 92% — 1h05 뒤 초기화'])
   // 초기화되어 내려갔다가 다시 넘으면 또 알린다
