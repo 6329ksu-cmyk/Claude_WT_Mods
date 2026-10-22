@@ -200,6 +200,12 @@ def session_files():
     return _FILES[1]
 
 
+def file_id(f):
+    """기록 파일의 세션 id = 파일 이름의 첫 id. Codex(0.163~)는 기록이 커지면 같은 대화를 '<대화 id>_<새 id>.jsonl' 새 파일로 이어 쓴다(history_mode paginated)."""
+    m = re.search(UUID, os.path.basename(f))
+    return m and m.group(0)
+
+
 def last_value(f, key):
     """기록 파일 전체에서 "key":"값"의 마지막 값. 이름을 바꾼 지 오래되면 뒤쪽 1MB에 없어 첫 질문 앞 12자로 보였다(2026-10-08)."""
     if not os.path.getsize(f):
@@ -282,14 +288,21 @@ def claude_sessions(since, files=None):
 
 
 def codex_sessions(since, files=None):
+    # 이어 쓴 새 파일을 다른 세션으로 읽어 같은 탭이 '실행 중'(옛 파일)·'꺼짐'(새 파일, 이름 없이 첫 질문 '이어서해') 두 줄로 보였다(2026-10-22 네트워크레이아웃).
+    # 대화마다 첫 질문은 첫 파일에서, 지금 상태는 가장 새 파일(이름 앞 시각이 가장 늦은 것)에서 읽는다
+    threads = {}
     for f, mtime in session_files()["codex"] if files is None else files:
+        threads.setdefault(file_id(f), []).append((f, mtime))
+    for sid, group in threads.items():
+        group.sort(key=lambda x: os.path.basename(x[0]))
+        head, (f, mtime) = group[0][0], group[-1]
         if mtime < since - STALE or os.path.getsize(f) == 0:
             continue
         last = last_time(f)
         if last < since:
             continue
         cwd = src = first = None
-        with open(f, encoding="utf-8", errors="ignore") as h:
+        with open(head, encoding="utf-8", errors="ignore") as h:
             for d in jsonl(h):
                 p = d.get("payload") or {}
                 if d.get("type") == "session_meta" and src is None:  # 첫 meta만(하위 agent 기록엔 부모 meta가 뒤에 붙음)
@@ -320,7 +333,6 @@ def codex_sessions(since, files=None):
                     break
             if not more or (running is not None and last_ai and last_user):
                 break
-        sid = re.search(r"([0-9a-f-]{36})\.jsonl$", f).group(1)
         yield dict(tool="codex", src=src, mtime=last, id=sid, cwd=cwd, title=codex_names().get(sid),
                    first=first, last_user=last_user or first, last_ai=last_ai,
                    state="작업 중 끊김" if running else "답변 후 대기", source=f,
@@ -441,8 +453,8 @@ def anchor(live):
     for f, mtime in files:
         if mtime < time.time() - STALE:  # 수정 시각이 멈춘 파일이 있어(STALE 주석 참고) 정렬해서 일찍 멈추지 않는다
             continue
-        m = re.search(UUID + r"\.jsonl$", f)
-        if m and m.group(0)[:-6] not in live and os.path.getsize(f):
+        sid = file_id(f)
+        if sid and sid not in live and os.path.getsize(f):
             best = max(best, last_time(f))
     return best or time.time()
 
@@ -450,7 +462,7 @@ def anchor(live):
 def read_session(sid):
     """id 하나의 세션 기록을 시간 범위와 상관없이 읽는다(최근 끝낸·킵한 세션 목록용). 기록이 없으면 None."""
     for tool, reader in (("claude", claude_sessions), ("codex", codex_sessions)):
-        files = [(f, m) for f, m in session_files()[tool] if f.endswith(sid + ".jsonl")]
+        files = [(f, m) for f, m in session_files()[tool] if file_id(f) == sid]
         if files:
             return next(reader(0, files=files), None)
     return None
@@ -499,7 +511,7 @@ def codex_self(window=600):
                 if re.search(r"(^|\s)\$(done|끝)\b", t):
                     ts = datetime.fromisoformat(d["timestamp"].replace("Z", "+00:00")).timestamp()
                     if ts >= now - window and (best is None or ts > best[1]):
-                        best = (re.search(r"([0-9a-f-]{36})[.]jsonl$", f).group(1), ts)
+                        best = (file_id(f), ts)
                     break
     return best[0] if best else None
 
@@ -601,7 +613,7 @@ def desk_data(hours):
     extra = [x for x in opened if x["id"] not in ids and x["id"] not in done and time.time() - x["opened"] < 3 * 86400]
     hidden = len(allrows) - len(rows)
     for x in extra:
-        files = [(f, mtime) for f, mtime in session_files()[x["tool"]] if f.endswith(x["id"] + ".jsonl")]
+        files = [(f, mtime) for f, mtime in session_files()[x["tool"]] if file_id(f) == x["id"]]
         reader = claude_sessions if x["tool"] == "claude" else codex_sessions
         history = next(reader(0, files=files), {})
         rows.append(dict(history, **x, opened_only=True))

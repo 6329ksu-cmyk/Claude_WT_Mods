@@ -1,6 +1,6 @@
 {
   "name": "memo",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "미해결 메모를 프롬프트 위에 띄우고, 해결하면 지운다",
   "types": "./types/index.d.ts"
 }

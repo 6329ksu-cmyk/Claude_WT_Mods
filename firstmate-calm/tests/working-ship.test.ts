@@ -205,4 +205,27 @@ describe("the working dog", () => {
     const moved = decodeCells(journal.blits[1]!.cells, 38, 3);
     expect(moved.glyphs[0]!.slice(0, 2)).toBe(" ▄");
   });
+
+  // Local change (2026-10-22): a workflow's agents are not in agent.list, so the Workflow call itself counts.
+  test("sits above the prompt while a workflow runs, gone once its notification arrives", async ($, on) => {
+    const { clock } = world(on, { preference: "on\n" });
+    on("agent.list", async () => ({ value: [] }));
+    on("tool.call", async () => ({ result: {}, text: "Workflow launched in background. Task ID: wabc123" }) as never);
+    on("prompt.submit", async (_$, e) => ({ text: e.text }));
+    await $.session.start({ cwd: "/work", surface: "terminal", isInteractive: true });
+    const above = {
+      surface: "terminal" as const,
+      component: "AbovePrompt" as const,
+      requestId: "above-1",
+      props: { hasSurvey: false, isWorking: false, maxRows: 12, bodyColumns: 80 },
+    } as never;
+    await $.tool.call({ tool: "Workflow", tool_use_id: "toolu_1", script: "" } as never);
+    expect(JSON.stringify(await $.ui.render(above))).toContain("조사 1개 기다리는 중");
+    await $.prompt.submit({
+      text: "<task-notification>\n<task-id>wabc123</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>completed</status>",
+      origin: { kind: "task-notification" },
+    } as never);
+    await clock.advance(2000);
+    expect(JSON.stringify(await $.ui.render(above))).not.toContain("기다리는 중");
+  });
 });

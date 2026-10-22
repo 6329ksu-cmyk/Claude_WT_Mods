@@ -119,6 +119,10 @@ const sites = new Map<string, { columns: number; rows: number; sit?: boolean }>(
 // dog sits above the prompt wagging its tail; it is gone when they finish or a turn starts.
 const bgAgents = atom({ plugin: "fm", key: "bgAgents" } as const, 0);
 const BG_POLL_MS = 2000;
+// Local change (2026-10-22, user: "백그라운드 서브에이전트 기다리고 있다는걸 표기"): a workflow's agents are not in
+// `$.agent.list()`, so the dog never sat while only a workflow ran. Each Workflow call the main loop launched counts
+// as one, by its tool_use_id (and task id), until the task-notification naming it arrives.
+const workflows = new Map<string, string | undefined>();
 
 async function countBackground($: EngineInterface): Promise<void> {
   let n: number;
@@ -127,6 +131,7 @@ async function countBackground($: EngineInterface): Promise<void> {
   } catch {
     return;
   }
+  n += workflows.size;
   if (n !== (await read($, bgAgents))) await update($, bgAgents, () => n);
 }
 /** How often the supervision notes check the store's tail copy and the host's latch. */
@@ -533,6 +538,22 @@ export const register: Register = (on) => {
       ],
     });
     return below ? Box({ flexDirection: "column", children: [dog, below] }) : dog;
+  });
+
+  on("tool.call", { tool: "Workflow" }, async ($, e, next) => {
+    const r = await next(e);
+    if (!e.agentId && e.tool_use_id && r.result !== undefined && !r.isError) {
+      workflows.set(e.tool_use_id, /Task ID: (\w+)/.exec(r.text ?? "")?.[1]);
+      await countBackground($);
+    }
+    return r;
+  });
+  on("prompt.submit", { origin: { kind: "task-notification" } }, async ($, e, next) => {
+    for (const [call, task] of workflows) {
+      if (e.text.includes(call) || (task && e.text.includes(`<task-id>${task}<`))) workflows.delete(call);
+    }
+    await countBackground($);
+    return next(e);
   });
 
   on("ui.render", { component: "ToolUse" }, async ($, e, next) => {
