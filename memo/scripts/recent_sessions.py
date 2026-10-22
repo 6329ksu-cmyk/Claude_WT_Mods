@@ -232,6 +232,9 @@ def claude_sessions(since, files=None):
         last = last_time(f)
         if last < since:
             continue
+        # 백그라운드로 보내면 새 id(--fork-session)로 이어지고 원래 탭 프로세스도 살아 있어 같은 일이 '실행 중' 두 줄로 보였다(10-22 pin-restore). 이어진 쪽만 남긴다
+        if last_value(f, "continuedInSessionId"):
+            continue
         cwd = title = first = None
         with open(f, encoding="utf-8", errors="ignore") as h:  # 앞에서 폴더·첫 질문만 찾고 멈춘다
             for d in jsonl(h):
