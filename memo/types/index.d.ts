@@ -13,6 +13,8 @@ export type DeskRow = {
   state: string
   last: string
   kept?: boolean
+  // 내일 열 것으로 체크([내일]). 메뉴판 [내일 열 것 N개 열기]가 한 번에 열고 지운다
+  tomorrow?: boolean
   me?: boolean
   done?: boolean
   last_user?: string

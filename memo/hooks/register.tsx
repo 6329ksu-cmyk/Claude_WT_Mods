@@ -42,8 +42,8 @@ const KEEP_DONE_FILE = 50
 const DESK_EVERY = 5 * 60_000
 const MORE_HOURS = 72
 // 세션 칸은 한 줄 모양 그대로 열 위치만 맞춘다(2026-10-13 사용자: 행·열이 제각각, 머리줄 있는 표는 불편).
-// 버튼은 터미널에서 [ 글자 ]로 그려져 글자 칸+4: [끝][킵·풀기][열기] 자리를 늘 같은 폭으로 비워 둬 글이 같은 칸에서 시작한다
-const BTN = { end: 6, keep: 8, open: 8 } as const
+// 버튼은 터미널에서 [ 글자 ]로 그려져 글자 칸+4: [끝][킵·풀기][내일·내일✓][열기] 자리를 늘 같은 폭으로 비워 둬 글이 같은 칸에서 시작한다
+const BTN = { end: 6, keep: 8, tomorrow: 9, open: 8 } as const
 // 결정 카드 [왜? 앞뒤] 자리(글자 8칸+4). 둘째 결정부터는 비워 둬 ❓가 같은 칸에서 시작한다
 const WHY_W = 12
 const NAME_MAX = 28
@@ -599,6 +599,34 @@ const keepSession = async ($: EngineInterface, row: DeskRow) => {
   await update($, desk, rows => (rows ?? []).map(r => (r.id === row.id ? { ...r, kept: !row.kept } : r)))
 }
 
+// [내일]/[내일✓]: 내일 열 세션 체크(10-23 사용자: "실행 중·킵·열기·꺼짐 말고 내일 열 거 체크체크"). 기록(tomorrow.json)도 recent_sessions.py 하나만 쓴다
+const tomorrowSession = async ($: EngineInterface, row: DeskRow) => {
+  const { exitCode, stdout } = await python($, 'scripts\\recent_sessions.py', row.tomorrow ? '--untomorrow' : '--tomorrow', row.id)
+  if (exitCode !== 0 || !stdout.includes(row.tomorrow ? '내일 열기 표시 해제' : '내일 열기로 표시')) {
+    $.ui.toast(`내일 표시를 못 바꿈: ${row.name}`)
+    return
+  }
+  await update($, desk, rows => (rows ?? []).map(r => (r.id === row.id ? { ...r, tomorrow: !row.tomorrow } : r)))
+}
+
+// [내일 열 것 N개 열기]: 체크해 둔 세션을 한 번에 새 탭으로 열고 체크를 지운다(이미 열린 것은 건너뜀)
+const openTomorrow = async ($: EngineInterface, n: number) => {
+  const { exitCode, stdout } = await python($, 'scripts\\recent_sessions.py', '--open-tomorrow')
+  if (exitCode !== 0 || !/열었습니다|이미 열려 있어/.test(stdout)) {
+    $.ui.toast(stdout.includes('표시한 세션이 없습니다') ? '내일 열 것으로 체크한 세션이 없어요' : '내일 열 것을 열지 못함(체크는 남겨 둠)')
+    return
+  }
+  // 일하다 끊긴 세션만 '이어서해'를 받는다(recent_sessions.py open_tomorrow). 몇 개인지 같이 알린다
+  const cont = /그중 (\d+)개는/.exec(stdout)?.[1]
+  $.ui.toast(
+    stdout.includes('열었습니다')
+      ? `내일 열 것 ${n}개를 새 탭으로 여는 중${cont ? `, 일하다 끊긴 ${cont}개는 이어서해` : ''}(이미 열린 건 건너뜀)`
+      : '내일 열 것이 이미 다 열려 있어요',
+  )
+  await update($, desk, rows => (rows ?? []).map(r => ({ ...r, tomorrow: false })))
+  void $.clock.after(15_000, () => refreshDesk($).catch(() => undefined))
+}
+
 const HINT: Record<'global' | 'session', string> = {
   session: '"○○ 메모해"라고 하면 들어옵니다',
   global: '"전역으로 ○○ 메모해"라고 하면 들어옵니다 · "10월 13일까지 ○○ 메모해"는 맨 위에 D-day로',
@@ -818,6 +846,7 @@ export const register: Register = on => {
     )
     const active = (rows ?? []).filter(r => !r.done)
     const ended = (rows ?? []).filter(r => r.done)
+    const tomorrowCount = active.filter(r => r.tomorrow).length
     const live = active.filter(r => r.live).length
 
     const menu = (
@@ -1025,7 +1054,10 @@ export const register: Register = on => {
             {ended.length > 0 && (
               <Button key="desk-ended" label={`최근 끝낸 ${ended.length} ${opened ? '▴' : '▾'}`} onPress={() => update($, showEnded, v => !v)} />
             )}
-            <Text dimColor wrap="truncate"> [끝] 숨김(탭 닫을 것) · [킵] 나중에(복구 때 전부 열기에서 빠짐) · [열기] 꺼진 세션 다시 열기</Text>
+            {tomorrowCount > 0 && (
+              <Button key="desk-tomorrow" label={`내일 열 것 ${tomorrowCount}개 열기`} onPress={() => openTomorrow($, tomorrowCount)} />
+            )}
+            <Text dimColor wrap="truncate"> [끝] 숨김(탭 닫을 것) · [킵] 나중에(복구 때 전부 열기에서 빠짐) · [내일] 내일 열 것 체크 · [열기] 꺼진 세션 다시 열기</Text>
           </Box>
           {rows === null && <Text dimColor>불러오는 중…</Text>}
           {order.map(r => (
@@ -1035,6 +1067,9 @@ export const register: Register = on => {
               </Box>
               <Box width={BTN.keep} flexShrink={0}>
                 <Button key={`keep-${r.id}`} label={r.kept ? '풀기' : '킵'} dimColor onPress={() => keepSession($, r)} />
+              </Box>
+              <Box width={BTN.tomorrow} flexShrink={0}>
+                <Button key={`tomorrow-${r.id}`} label={r.tomorrow ? '내일✓' : '내일'} dimColor={!r.tomorrow} onPress={() => tomorrowSession($, r)} />
               </Box>
               <Box width={BTN.open} flexShrink={0}>
                 {!r.live && <Button key={`open-${r.id}`} label="열기" onPress={() => openSession($, r)} />}
@@ -1052,7 +1087,7 @@ export const register: Register = on => {
           {opened &&
             ended.map(r => (
               <Box key={`ended-${r.id}`}>
-                <Box width={BTN.end + BTN.keep + BTN.open} flexShrink={0}>
+                <Box width={BTN.end + BTN.keep + BTN.tomorrow + BTN.open} flexShrink={0}>
                   <Button key={`revive-${r.id}`} label="되살리기" dimColor onPress={() => reviveSession($, r)} />
                 </Box>
                 <Text dimColor wrap="truncate">

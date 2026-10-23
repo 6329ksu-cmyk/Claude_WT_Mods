@@ -8,11 +8,14 @@
   python recent_sessions.py 24           # 끊기기 직전 24시간
   python recent_sessions.py --ask        # 한 줄 목록 보고 번호 고르기(Enter=전부(킵 제외), +24=더 거슬러, q=취소)
   python recent_sessions.py --keep id    # 킵(급하지 않아 나중에 할 것) 표시, --unkeep으로 해제. 목록엔 보이고 '전부 열기'에서만 빠진다
+  python recent_sessions.py --need 1,3   # 필요(바로 이어 갈 것) 표시: 1시간 안에 열 때 한 번만 '이어서해'를 보내고 풀린다. --unneed로 해제
+  python recent_sessions.py --tomorrow id   # 내일 열 것 표시(메뉴판 [내일]), --untomorrow로 해제. --open-tomorrow가 표시한 것만 한 번에 열고(일하다 끊긴 것만 '이어서해', Esc로 멈춘 건 열기만) 표시를 지운다
   python recent_sessions.py 6 --open all # 묻지 않고 전부 열기
   python recent_sessions.py 6 --open 1,3,5
   python recent_sessions.py --from 저장한목록.json   # 저장해 둔 목록 그대로 열기
   python recent_sessions.py --open-desk 1,3   # 최근 --desk 목록 번호 그대로 열기(all = 킵 뺀 전부). 연 뒤 실제로 떴는지 확인해 알린다
 바탕화면 AI세션보기.cmd = --serve, 비상용 - AI 세션 전부 열기.cmd = --ask. 탭은 명령 프롬프트 프로필, 실행 중인 세션은 건너뛴다.
+세션은 기록에 남은 원래 모델·effort로 연다. Codex는 기본 ~/.codex·지금 CODEX_HOME·Orca 저장소를 모두 읽고, 세션마다 그 저장소를 CODEX_HOME으로 밝혀 연다.
 시간은 파일 수정 시각이 아니라 기록 안의 마지막 시각으로 본다(Codex는 수정 시각이 늦게 바뀜).
 같은 첫 질문으로 갈라진 사본은 가장 최근 것만, Codex 하위 agent는 빼고 본다. agy는 아직 포함하지 않는다.
 기록 파일은 앞(첫 질문·폴더)과 뒤(마지막 질문·답)만 읽는다. 한 달치도 수 초 안에 끝나게 하려는 것이다.
@@ -30,6 +33,14 @@ ABS_PATH = r"[A-Za-z]:[\\/]|/[a-zA-Z]/" if WINDOWS else r"/(?:Users|Volumes|priv
 HOME = os.path.expanduser("~")
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 CMD_PROFILE = "{0caa0dad-35be-5f56-a8ff-afceeeaa6101}"  # Windows Terminal '명령 프롬프트'
+# Claude 기록에서 effort를 못 찾고(2026-10-18 전 기록에 /effort 출력도 없을 때 등) settings.json modelSettings에도 그 모델 값이 없을 때 쓰는 값.
+# 사용자 기본 effortLevel(2026-10-21 xhigh)과 같게 둔다. Codex는 기록 effort가 비면(null = 모델 기본값) -c를 빼서 Codex 설정을 따른다
+DEFAULT_EFFORT = "xhigh"
+CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")  # claude --effort가 받는 값(2.1.305 --help)
+# 필요 표시한 세션을 열 때 보내는 첫 입력. 띄어쓰기·따옴표 없이 붙여야 wt가 탭 명령을 다시 묶을 때도 한 인자로 간다
+CONTINUE_PROMPT = "이어서해"
+# 필요 표시는 이 시간 안에 열 때 한 번만 쓴다. 메뉴판·브라우저 화면엔 표시가 안 보여, 오래된 표시로 저절로 이어 가지 않게 한다
+NEED_TTL = 3600
 
 
 def text_of(content):
@@ -191,19 +202,36 @@ STALE = 14 * 86400  # 수정 시각이 기록 시각보다 이만큼까지 옛�
 _FILES = (0, {})
 
 
+def codex_homes():
+    """Codex 세션 저장소(CODEX_HOME)들: 기본 ~/.codex, 지금 설정된 CODEX_HOME, Orca 것(바탕화면 'AI 프로그램 개발' Codex 런처들이 씀).
+    기본 저장소만 읽어서 Orca 쪽 세션이 목록에 안 나왔다(2026-10-21)."""
+    homes = []
+    for h in (HOME + "/.codex", os.environ.get("CODEX_HOME"), HOME + r"\AppData\Roaming\orca\codex-runtime-home\home"):
+        if h and os.path.isdir(h) and os.path.normcase(os.path.abspath(h)) not in [os.path.normcase(os.path.abspath(x)) for x in homes]:
+            homes.append(h)
+    return homes
+
+
 def session_files():
-    """{'claude': [(경로, 수정 시각)], 'codex': [...]}. 파일 수천 개를 매번 훑지 않게 10초간 재사용한다."""
+    """{'claude': [(경로, 수정 시각)], 'codex': [...]}. 파일 수천 개를 매번 훑지 않게 10초간 재사용한다.
+    같은 Codex 기록이 두 저장소에 있으면 하드링크는 앞 저장소(기본) 것, 따로 복사된 사본은 더 최근에 바뀐 것을 쓴다."""
     global _FILES
     if time.time() - _FILES[0] > 10:
-        kinds = dict(claude=HOME + "/.claude/projects/*/*.jsonl", codex=HOME + "/.codex/sessions/**/*.jsonl")
-        _FILES = (time.time(), {k: [(f, os.path.getmtime(f)) for f in glob.glob(g, recursive=True)] for k, g in kinds.items()})
+        codex = {}
+        for h in codex_homes():
+            for f in glob.glob(h + "/sessions/**/*.jsonl", recursive=True):
+                old = codex.get(os.path.basename(f))
+                if old is None or (not os.path.samefile(old, f) and os.path.getmtime(f) > os.path.getmtime(old)):
+                    codex[os.path.basename(f)] = f
+        kinds = dict(claude=glob.glob(HOME + "/.claude/projects/*/*.jsonl"), codex=list(codex.values()))
+        _FILES = (time.time(), {k: [(f, os.path.getmtime(f)) for f in fs] for k, fs in kinds.items()})
     return _FILES[1]
 
 
 def file_id(f):
     """기록 파일의 세션 id = 파일 이름의 첫 id. Codex(0.163~)는 기록이 커지면 같은 대화를 '<대화 id>_<새 id>.jsonl' 새 파일로 이어 쓴다(history_mode paginated)."""
     m = re.search(UUID, os.path.basename(f))
-    return m and m.group(0)
+    return m.group(0) if m else os.path.basename(f).removesuffix(".jsonl")
 
 
 def last_value(f, key):
@@ -216,15 +244,92 @@ def last_value(f, key):
         return json.loads(m.group(1)) if m else None
 
 
-def codex_names():
-    """Codex 탭 이름(자동 제목·/rename 모두)은 ~/.codex/session_index.jsonl에 id별로 덧붙는다. 마지막 줄이 지금 이름이다."""
-    names = {}
+def last_record(f, marker, ok):
+    """기록 파일에서 marker가 든 줄 가운데 ok인 마지막 기록(JSON). 긴 작업 출력 뒤에는 끝 1MB에 없어 파일 전체를 mmap으로 뒤에서부터 찾는다."""
+    if not os.path.getsize(f):
+        return None
+    with open(f, "rb") as h, mmap.mmap(h.fileno(), 0, access=mmap.ACCESS_READ) as data:
+        end = len(data)
+        while (i := data.rfind(marker, 0, end)) >= 0:
+            start, stop = data.rfind(b"\n", 0, i) + 1, data.find(b"\n", i)
+            try:
+                d = json.loads(data[start:stop if stop >= 0 else len(data)])
+                if isinstance(d, dict) and ok(d):
+                    return d
+            except (ValueError, AttributeError):
+                pass
+            end = start
+    return None
+
+
+def claude_run(f):
+    """Claude 세션의 (모델, effort). 본 대화의 마지막 API 요청 기록(api-request, 2026-10-18부터 남음)이 실제로 쓴 값이다.
+    그 기록이 없으면 마지막 답의 모델과 마지막 /effort 출력. effort를 못 찾으면 사용자가 그 모델에 정해 둔 값(model_effort). 못 찾은 값은 None."""
+    d = last_record(f, b'"api-request"', lambda d: d.get("type") == "api-request"
+                    and str(d.get("querySource")).startswith(("repl_main_thread", "sdk")))  # 옆 질문·요약 같은 다른 요청은 빼고 본 대화만
+    if d:
+        p = d.get("params") or {}
+        model, effort = p.get("model"), (p.get("output_config") or {}).get("effort")
+    else:
+        a = last_record(f, b'"assistant"', lambda d: d.get("type") == "assistant" and not d.get("isSidechain")
+                        and not str((d.get("message") or {}).get("model") or "<").startswith("<"))  # <synthetic>(오류·중단 안내)는 모델이 아니다
+        e = last_record(f, b"<local-command-stdout>Set effort level to ", lambda d: d.get("type") == "user"
+                        and str((d.get("message") or {}).get("content")).startswith("<local-command-stdout>Set effort level to "))
+        m = e and re.match(r"<local-command-stdout>Set effort level to (\w+)", e["message"]["content"])
+        model, effort = a and a["message"]["model"], m and m.group(1)
+    return model, effort if effort in CLAUDE_EFFORTS else model_effort(model)
+
+
+def model_effort(model):
+    """사용자가 그 모델에 정해 둔 effort(~/.claude/settings.json modelSettings). 기록에 effort가 없을 때만 쓴다. 없으면 None."""
     try:
-        with open(HOME + "/.codex/session_index.jsonl", encoding="utf-8") as h:
-            for d in jsonl(h):
-                names[d.get("id")] = d.get("thread_name") or names.get(d.get("id"))
-    except OSError:
-        pass
+        with open(HOME + "/.claude/settings.json", encoding="utf-8") as h:
+            return ((json.load(h).get("modelSettings") or {}).get(model) or {}).get("effortLevel")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def codex_run(f):
+    """Codex 세션의 (모델, effort): 마지막 turn_context. 긴 기록은 끝 1MB에 없었다(2026-10-21 63MB 기록)."""
+    p = (last_record(f, b'"turn_context"', lambda d: d.get("type") == "turn_context") or {}).get("payload") or {}
+    return p.get("model"), p.get("effort")
+
+
+def codex_home(f):
+    """기록 파일이 든 Codex 저장소. 기본 ~/.codex면 None(CODEX_HOME을 비우고 연다)."""
+    i = f.replace("\\", "/").rfind("/sessions/")
+    home = os.path.abspath(f[:i]) if i > 0 else None
+    return None if not home or os.path.normcase(home) == os.path.normcase(os.path.abspath(HOME + "/.codex")) else home
+
+
+def resume_cmd(tool, sid, model, effort, home=None):
+    """원래 모델·effort로 다시 여는 명령(탭의 cmd /k가 그대로 실행한다). 기록 값이 비었거나 이상하면 그 옵션을 빼고, Claude effort만 DEFAULT_EFFORT로 채운다.
+    Codex는 저장소를 늘 CODEX_HOME으로 밝힌다(기본 저장소면 비운다): 탭이 Orca 런처가 띄운 Windows Terminal 창에 붙으면 그 창의 CODEX_HOME을 물려받을 수 있다.
+    Windows는 cmd 문법(set …&&), Mac은 zsh가 실행하므로 sh 문법이다(sh에서 set X=…는 환경변수가 아니라 $1을 바꾼다).
+    Windows는 따옴표를 쓰지 않는다: wt가 탭 명령을 다시 묶을 때 안쪽 따옴표를 그대로 두는 것에 기대지 않으려는 것이다.
+    Mac은 모델만 따옴표로 감싼다: zsh는 따옴표 없는 claude-opus-5-5[1m]을 파일 이름 패턴으로 읽어 실행하지 않는다."""
+    safe = lambda v: isinstance(v, str) and re.fullmatch(r"[A-Za-z0-9._\[\]-]+", v)
+    q = (lambda v: v) if WINDOWS else shlex.quote
+    if tool == "claude":
+        return f"claude --resume {sid}" + (f" --model {q(model)}" if safe(model) else "") \
+            + f" --effort {effort if effort in CLAUDE_EFFORTS else DEFAULT_EFFORT}"
+    cmd = "codex --no-daemon resume" + (f" -m {q(model)}" if safe(model) else "") \
+        + (f" -c model_reasoning_effort={effort}" if isinstance(effort, str) and re.fullmatch(r"[a-z]+", effort) else "") + f" {sid}"
+    if not WINDOWS:
+        return f"CODEX_HOME={shlex.quote(home)} {cmd}" if home else f"env -u CODEX_HOME {cmd}"
+    return f"set CODEX_HOME={home or ''}&& {cmd}"  # 세션은 그 저장소에서만 찾는다
+
+
+def codex_names():
+    """Codex 탭 이름(자동 제목·/rename 모두)은 저장소마다 session_index.jsonl에 id별로 덧붙는다. 마지막 줄이 지금 이름이다."""
+    names = {}
+    for home in codex_homes():
+        try:
+            with open(home + "/session_index.jsonl", encoding="utf-8") as h:
+                for d in jsonl(h):
+                    names[d.get("id")] = d.get("thread_name") or names.get(d.get("id"))
+        except OSError:
+            pass
     return names
 
 
@@ -254,6 +359,7 @@ def claude_sessions(since, files=None):
             continue
         for nbytes in (1 << 20, 1 << 23, 1 << 26):  # 마지막 질문·답이 안 보이면 더 읽는다
             tail = last_ai = last_user = None
+            stopped = False
             lines, more = tail_lines(f, nbytes)
             for d in jsonl(reversed(lines)):
                 if d.get("isSidechain") or d.get("subtype") in ("away_summary", "informational") or d.get("type") not in ("user", "assistant"):
@@ -262,6 +368,8 @@ def claude_sessions(since, files=None):
                 blocks = content if isinstance(content, list) else []
                 if tail is None:
                     tail = "tool" if d["type"] == "assistant" and any(isinstance(c, dict) and c.get("type") == "tool_use" for c in blocks) else d["type"]
+                    # Esc로 멈추면 "[Request interrupted by user…]" 줄이 남는다: 끊김이어도 사용자가 멈춘 것
+                    stopped = d["type"] == "user" and text_of(content).startswith("[Request interrupted by user")
                 if d["type"] == "assistant" and last_ai is None:
                     texts = [c["text"] for c in blocks if isinstance(c, dict) and c.get("type") == "text" and c["text"].strip()]
                     last_ai = texts[-1] if texts else None
@@ -282,9 +390,9 @@ def claude_sessions(since, files=None):
                 pass
         yield dict(tool="claude", src="cli", mtime=last, id=sid, cwd=cwd, title=title, auto=auto,
                    first=first, last_user=last_user or first, last_ai=last_ai,
-                   state="답변 후 대기" if tail == "assistant" else "작업 중 끊김",
+                   state="답변 후 대기" if tail == "assistant" else "작업 중 끊김", stopped=stopped,
                    source=f, **recent_context(lines, "claude", cwd),
-                   cmd=f"claude --resume {sid}")
+                   cmd=resume_cmd("claude", sid, *claude_run(f)))
 
 
 def codex_sessions(since, files=None):
@@ -318,11 +426,13 @@ def codex_sessions(since, files=None):
             continue
         for nbytes in (1 << 20, 1 << 23, 1 << 26):
             running = last_ai = last_user = None
+            stopped = False
             lines, more = tail_lines(f, nbytes)
             for d in jsonl(reversed(lines)):
                 p = d.get("payload") or {}
                 if d.get("type") == "event_msg" and p.get("type") in ("task_started", "task_complete", "turn_aborted"):
-                    running = p["type"] in ("task_started", "turn_aborted") if running is None else running
+                    if running is None:  # 마지막 사건만 본다. turn_aborted는 사용자가 Esc로 멈춘 것
+                        running, stopped = p["type"] in ("task_started", "turn_aborted"), p["type"] == "turn_aborted"
                 elif d.get("type") == "response_item" and p.get("type") == "message":
                     t = text_of(p.get("content"))
                     if p.get("role") == "user" and last_user is None and is_human(t):
@@ -335,8 +445,8 @@ def codex_sessions(since, files=None):
                 break
         yield dict(tool="codex", src=src, mtime=last, id=sid, cwd=cwd, title=codex_names().get(sid),
                    first=first, last_user=last_user or first, last_ai=last_ai,
-                   state="작업 중 끊김" if running else "답변 후 대기", source=f,
-                   **recent_context(lines, "codex", cwd), cmd=f"codex --no-daemon resume {sid}")
+                   state="작업 중 끊김" if running else "답변 후 대기", stopped=stopped, source=f,
+                   **recent_context(lines, "codex", cwd), cmd=resume_cmd("codex", sid, *codex_run(f), home=codex_home(f)))
 
 
 def session_labels():
@@ -469,8 +579,10 @@ def read_session(sid):
 
 
 def load_done(kind="done"):
-    """사용자가 표시한 세션 {id: 표시한 시각}. done = 끝남(목록에서 숨김), keep = 킵(급하지 않아 나중에 할 것: 목록엔 보이되 '전부 열기'에서 빠짐).
-    끝남은 표시 뒤에 대화가 새로 생기면 자동으로 풀린다. 킵은 [풀기](--unkeep)로만 풀린다: 킵 누르고 바로 닫아도 믿을 수 있게(2026-10-12)."""
+    """사용자가 표시한 세션 {id: 표시한 시각}. done = 끝남(목록에서 숨김), keep = 킵(급하지 않아 나중에 할 것: 목록엔 보이되 '전부 열기'에서 빠짐),
+    need = 필요(바로 이어 갈 것: 열 때 '이어서해'를 보냄), tomorrow = 내일 열 것(--open-tomorrow로 열면 지움).
+    끝남·필요는 표시 뒤에 대화가 새로 생기면 자동으로 풀린다. 필요는 열 때 한 번 쓰면 지우고, NEED_TTL이 지나면 무시한다.
+    킵은 [풀기](--unkeep)로만 풀린다: 킵 누르고 바로 닫아도 믿을 수 있게(2026-10-12)."""
     try:
         with open(SNAP_DIR + f"/{kind}.json", encoding="utf-8") as h:
             return json.load(h)
@@ -480,6 +592,14 @@ def load_done(kind="done"):
 
 def is_done(sid, last, done):
     return sid in done and last <= done[sid] + 120
+
+
+def needs_continue(s, need):
+    """필요 표시가 아직 살아 있는가: NEED_TTL 안에 했고 그 뒤 대화가 없다. 열 때 한 번 쓰면 open_tabs가 지워서 다시 열 때 '이어서해'를 또 보내지 않는다."""
+    if s["id"] not in need or time.time() - need[s["id"]] > NEED_TTL:
+        return False
+    f = s.get("source") or max((f for f, _ in session_files()[s["tool"]] if file_id(f) == s["id"]), key=os.path.basename, default=None)
+    return is_done(s["id"], last_time(f) if f else 0, need)
 
 
 def collect(since, keep_done=False):
@@ -517,7 +637,7 @@ def codex_self(window=600):
 
 
 def mark_done(args, undo=False, kind="done"):
-    """--done [번호,번호|id앞자리]: 끝남 표시(--keep이면 킵 표시). 번호는 최근 --desk가 저장한 latest.json 기준, 비우면 이 세션(CLAUDE_CODE_SESSION_ID)."""
+    """--done [번호,번호|id앞자리]: 끝남 표시(--keep이면 킵, --need면 필요 표시). 번호는 최근 --desk가 저장한 latest.json 기준, 비우면 이 세션(CLAUDE_CODE_SESSION_ID)."""
     done = load_done(kind)
     pool = {}
     for name in ("latest.json", "last_opened.json"):
@@ -548,8 +668,8 @@ def mark_done(args, undo=False, kind="done"):
             done.pop(sid, None)
         else:
             done[sid] = time.time()
-        word = "끝남" if kind == "done" else "킵"
-        print((f"{word} 표시 해제: " if undo else f"{word}으로 표시: ") + (pool.get(sid, {}).get("name") or sid[:8]) + f" ({sid[:8]})")
+        word, marked = dict(done=("끝남", "끝남으로"), keep=("킵", "킵으로"), need=("필요", "필요로"), tomorrow=("내일 열기", "내일 열기로"))[kind]
+        print((f"{word} 표시 해제: " if undo else f"{marked} 표시: ") + (pool.get(sid, {}).get("name") or sid[:8]) + f" ({sid[:8]})")
     os.makedirs(SNAP_DIR, exist_ok=True)
     with open(SNAP_DIR + f"/{kind}.json", "w", encoding="utf-8") as h:
         json.dump(done, h, indent=1)
@@ -567,7 +687,9 @@ sanul·홈·fix나 '다음 지시 대기', '빌드 오류 확인 중'만으로 �
 번호와 새 세션 표시를 유지한다. 실행 상태와 계속 필요한지는 별개다. 테두리 표·고정 폭 열 정렬 대신 자연스럽게 줄바꿈하는 목록으로 쓴다.
 판정은 복구 추천일 뿐이다. 세션을 자동으로 열거나 done 처리하지 않고 사용자 선택을 기다린다.
 '킵(나중에 할 것)' 표시는 사용자가 급하지 않아 여유 있을 때 하려고 남긴 세션이다. 맨 아래 '킵' 묶음에 한 줄씩만 쓴다: [번호] 이름 · 기다리는 것(사용자 답·회신·남은 작업 하나). 세 줄 요약은 사용자가 그 번호를 물을 때만 쓰고, 고르기 전에는 열자고 권하지 않는다.
-사용자가 번호를 고르면 python ~/.claude/scripts/recent_sessions.py --open-desk 1,3 으로 이 목록 번호 그대로 연다(all = 킵 뺀 전부). 다른 시간 범위로 목록을 다시 뽑아 번호를 맞추지 않는다. 열고 나면 출력되는 '열림 확인 N/M'과 안 뜬 탭을 그대로 알린다."""
+'내일 열 것' 표시는 사용자가 전날 메뉴판에서 다음 날 열려고 고른 세션이다. 있으면 첫 줄 바로 뒤에 그 번호들을 먼저 알리고, 사용자가 열자고 하면 python ~/.claude/scripts/recent_sessions.py --open-tomorrow 로 그것만 연다. 일하다 끊긴 세션(Esc로 멈춘 것 제외)만 '이어서해'를 받고 나머지는 입력 없이 열린다. 연 뒤 표시는 지워진다.
+사용자가 번호를 고르면 python ~/.claude/scripts/recent_sessions.py --open-desk 1,3 으로 이 목록 번호 그대로 연다(all = 킵 뺀 전부). 다른 시간 범위로 목록을 다시 뽑아 번호를 맞추지 않는다. 열고 나면 출력되는 '열림 확인 N/M'과 안 뜬 탭을 그대로 알린다.
+사용자가 바로 이어 갈 번호를 말하면(예: '1,3은 이어서') 열기 전에 python ~/.claude/scripts/recent_sessions.py --need 1,3 으로 필요 표시한다. 필요 표시한 세션만 '이어서해'를 받아 바로 이어 가고 나머지는 입력 없이 열린다. 표시는 1시간 안에 열 때 한 번만 쓰인다. 판정 '필요'만 보고 표시하지 않는다."""
 DESK_PROMPT = (
     "PC just crashed. You are my recovery desk. First read the procedure memory note "
     "~/.claude/projects/C--Users-sanul/memory/reference_recent_sessions_restore.md. "
@@ -617,17 +739,19 @@ def desk_data(hours):
         reader = claude_sessions if x["tool"] == "claude" else codex_sessions
         history = next(reader(0, files=files), {})
         rows.append(dict(history, **x, opened_only=True))
+        rows[-1]["cmd"] = history.get("cmd") or x.get("cmd")  # 저장해 둔 옛 명령엔 원래 모델·effort가 없어 기록에서 새로 만든 것을 쓴다
     try:
         with open(SNAP_DIR + "/latest.json", encoding="utf-8") as h:
             previous = {x["id"] for x in json.load(h)}
     except (OSError, ValueError):
         previous = None
-    keep = load_done("keep")
-    # 킵한 세션은 오래돼도 목록에 남긴다: 킵 누르고 바로 닫아도 '여유 있을 때' 찾을 수 있어야 한다(24시간 지나 사라졌다, 2026-10-12)
+    keep, tomorrow = load_done("keep"), load_done("tomorrow")
+    # 킵한 세션은 오래돼도 목록에 남긴다: 킵 누르고 바로 닫아도 '여유 있을 때' 찾을 수 있어야 한다(24시간 지나 사라졌다, 2026-10-12). 내일 열 것도 같다
     have = {s["id"] for s in rows}
-    rows += [s for s in map(read_session, (i for i in keep if i not in have and i not in done)) if s]
+    rows += [s for s in map(read_session, (i for i in {**keep, **tomorrow} if i not in have and i not in done)) if s]
     for s in rows:
         s["kept"] = s["id"] in keep  # 킵은 [풀기]로만 풀린다(열어만 둔 세션도 킵할 수 있다)
+        s["tomorrow"] = s["id"] in tomorrow
         s["new"] = previous is not None and s["id"] not in previous
         s.setdefault("first", "")
         s.setdefault("title", None)
@@ -657,6 +781,7 @@ def desk(hours, save=True):
     """복구 desk. save=False는 snapshot을 쓰지 않고 같은 근거를 확인한다."""
     data = desk_data(hours)
     live, labels, rows = data["live"], data["labels"], data["rows"]
+    need = load_done("need")
     if data["hidden"]:
         print(f"(끝남으로 표시해 숨긴 세션 {data['hidden']}개 — 다시 보려면 --undone 번호나 id)")
     fmt = lambda t: time.strftime("%m-%d %H:%M", time.localtime(t))
@@ -671,7 +796,8 @@ def desk(hours, save=True):
         last = "열어 둠 " + fmt(s["opened"]) if s.get("opened_only") else fmt(s["mtime"])
         details = desk_details(s, labels)
         print(f"\n[{n}] {s['tool']} · {'● 실행 중' if s['id'] in live else '○ 꺼짐'} · {last}" + (" · 새 세션" if s["new"] else "")
-              + (" · 킵(나중에 할 것)" if s.get("kept") else ""))
+              + (" · 킵(나중에 할 것)" if s.get("kept") else "") + (" · 필요(열면 이어서해)" if needs_continue(s, need) else "")
+              + (" · 내일 열 것" if s.get("tomorrow") else ""))
         print(f"    이름: {name_of(s, labels)}" + (f" / 사용자 이름: {details['user_name']}" if details["user_name"] else ""))
         print(f"    시작 폴더: {s['cwd']}")
         print(f"    기록상 상태: {s['state']}")
@@ -709,7 +835,31 @@ def open_desk(pick):
         print("번호를 확인해 주세요. 번호는 최근 --desk 목록 기준입니다.")
         return
     print(f"데스크 목록 기준: {time.strftime('%m-%d %H:%M', time.localtime(os.path.getmtime(path)))} 저장")
-    open_tabs([dict(x, title=x["name"], first="") for x in chosen], live_ids(), session_labels(), confirm=True)
+    open_tabs([saved_row(x) for x in chosen], live_ids(), session_labels(), confirm=True)
+
+
+def open_tomorrow():
+    """메뉴판 [내일 열 것 N개 열기]: 전날 [내일]로 표시해 둔 세션만 한 번에 연다(2026-10-23 사용자 요청: 실행 중·킵·꺼짐 말고 내일 열 것 체크).
+    일하다 끊긴 세션(작업 중 끊김, Esc로 직접 멈춘 것은 빼고)만 '이어서해'로 바로 이어 간다. 답을 끝낸 세션은 AI가 묻는 중이든
+    끝났든 열기만 한다: '이어서해'를 받으면 사용자 답을 짐작해 진행한다(2026-10-23 사용자 선택 B').
+    연 뒤 표시를 모두 지운다. 이미 열려 있어 건너뛴 것도 지운다: 다음 날 또 열리지 않게."""
+    marks = load_done("tomorrow")
+    chosen = [s for s in map(read_session, marks) if s]
+    if not chosen:
+        print("내일 열 것으로 표시한 세션이 없습니다.")
+        return
+    cut = {s["id"] for s in chosen if s["state"] == "작업 중 끊김" and not s.get("stopped")}
+    opened, skipped = open_tabs(chosen, live_ids(), session_labels(), cont_ids=cut)
+    if opened or skipped:  # 하나도 못 열었으면(Mac 터미널 실패 등) 표시를 남겨 다시 누를 수 있게
+        # ponytail: Mac에서 일부만 실패해도 전부 지움. 실패한 id를 open_mac이 돌려주게 하면 그것만 남길 수 있다
+        with open(SNAP_DIR + "/tomorrow.json", "w", encoding="utf-8") as h:
+            json.dump({}, h)
+
+
+def saved_row(x):
+    """저장해 둔 목록 줄. 명령은 기록에서 새로 만든다(전에 저장한 목록엔 원래 모델·effort가 없다). 기록을 못 찾으면 저장된 명령 그대로."""
+    s = read_session(x["id"]) if re.fullmatch(UUID, x.get("id") or "") else None
+    return dict(x, title=x["name"], first="", cmd=s["cmd"] if s else x["cmd"])
 
 
 def open_id(sid):
@@ -743,8 +893,9 @@ def confirm_opened(chosen, labels, since, wait=40):
         print(f"  안 뜸: {name_of(s, labels)} ({s['tool']}) · {why}")
 
 
-def open_tabs(chosen, live, labels, confirm=False):
-    """새 Windows Terminal 창에 탭으로 연다. (연 개수, 건너뛴 이름들)을 돌려준다. confirm이면 실제로 떴는지까지 본다(CLI만, 브라우저 화면은 안 기다림)."""
+def open_tabs(chosen, live, labels, confirm=False, cont_ids=()):
+    """새 Windows Terminal 창에 탭으로 연다. (연 개수, 건너뛴 이름들)을 돌려준다. confirm이면 실제로 떴는지까지 본다(CLI만, 브라우저 화면은 안 기다림).
+    필요 표시한 세션과 cont_ids(내일 열 것 중 일하다 끊긴 것)만 '이어서해'를 붙인다."""
     # 이미 열려 있는 세션을 또 열면 같은 대화를 두 프로세스가 건드린다(2026-10-02 시험 중 실제로 중복 탭이 생김).
     skipped = [name_of(s, labels) for s in chosen if s["id"] in live]
     for name in skipped:
@@ -753,34 +904,50 @@ def open_tabs(chosen, live, labels, confirm=False):
     if not chosen:
         print("\n열 세션이 없습니다. +24처럼 시간을 늘려 보세요.")
         return 0, skipped
+    need = load_done("need")
+    cont = [s["id"] for s in chosen if needs_continue(s, need) or s["id"] in cont_ids]  # 이 세션들만 '이어서해'로 바로 이어 간다. 나머지는 입력 없이 연다
     if not WINDOWS:
-        return open_mac(chosen, labels, confirm), skipped
+        return open_mac(chosen, labels, confirm, cont), skipped
     wt = ["wt", "-w", "restore"]
     for s in chosen:
         # 사용자가 평소 쓰는 '명령 프롬프트' 프로필로 연다(PowerShell 탭은 싫어함, 2026-10-02).
         # --title은 처음 이름일 뿐: 고정 옵션(--suppressApplicationTitle)을 빼서 /rename·자동 제목을 따라가게 한다(2026-10-12 사용자 결정, 탭 이름 = 세션 이름)
         wt += ["nt", "-p", CMD_PROFILE, "--title", name_of(s, labels), "-d", s["cwd"],
-               "cmd", "/k", s["cmd"], ";"]
+               "cmd", "/k", s["cmd"] + (" " + CONTINUE_PROMPT if s["id"] in cont else ""), ";"]
     # Claude 안에서 실행하면 CLAUDE_CODE_CHILD_SESSION 등이 새 탭으로 넘어가 대화가 저장되지 않는다(2026-10-02 확인).
     env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE") or k == "CLAUDE_CODE_GIT_BASH_PATH"}
     since = time.time()
     subprocess.Popen(wt[:-1], env=env)
     remember_opened(chosen, labels)
-    print(f"\n{len(chosen)}개 탭을 새 Windows Terminal 창으로 열었습니다.", flush=True)
+    spend_need(cont)
+    print(f"\n{len(chosen)}개 탭을 새 Windows Terminal 창으로 열었습니다." + continued(cont), flush=True)
     if confirm:
         confirm_opened(chosen, labels, since)
     return len(chosen), skipped
 
 
-def open_mac(chosen, labels, confirm=False):
+def spend_need(ids):
+    """보낸 필요 표시는 지운다: 나중에 다시 열 때(메뉴판 [열기] 등) 또 저절로 이어 가지 않게. 지난 표시도 같이 정리한다."""
+    if ids:
+        left = {k: v for k, v in load_done("need").items() if k not in ids and time.time() - v <= NEED_TTL}
+        with open(SNAP_DIR + "/need.json", "w", encoding="utf-8") as h:
+            json.dump(left, h, indent=1)
+
+
+def continued(ids):
+    return f" 그중 {len(ids)}개는 '{CONTINUE_PROMPT}'로 바로 이어 갑니다." if ids else ""
+
+
+def open_mac(chosen, labels, confirm=False, cont=()):
     """Mac(2026-10-21): Orca 안에서 부르면 Orca 새 탭(그 세션 폴더의 작업 공간, 없으면 지금 보는 곳)에, 아니면 터미널(Terminal.app) 새 창에 연다.
-    새 탭의 셸은 Orca·터미널이 띄우므로 이 프로세스의 CLAUDE_* 환경변수가 넘어가지 않는다(넘어가면 대화가 저장되지 않는다). 연 개수를 돌려준다."""
+    새 탭의 셸은 Orca·터미널이 띄우므로 이 프로세스의 CLAUDE_* 환경변수가 넘어가지 않는다(넘어가면 대화가 저장되지 않는다). 연 개수를 돌려준다.
+    cont에 든 세션(필요 표시)만 '이어서해'를 붙인다."""
     orca = os.path.join(os.environ.get("ORCA_CLI_BIN_DIR") or os.path.dirname(ORCA), "orca")
     in_orca = os.environ.get("TERM_PROGRAM") == "Orca" and os.path.exists(orca)
     env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
     since, opened = time.time(), []
     for s in chosen:
-        line = f"cd {shlex.quote(s.get('cwd') or HOME)} && {s['cmd']}"
+        line = f"cd {shlex.quote(s.get('cwd') or HOME)} && {s['cmd']}" + (" " + CONTINUE_PROMPT if s["id"] in cont else "")
         try:
             if in_orca:
                 ok = any(subprocess.run([orca, "terminal", "create", "--worktree", where, "--command", line, "--json"],
@@ -800,7 +967,9 @@ def open_mac(chosen, labels, confirm=False):
             print(f"열지 못함: {name_of(s, labels)}")
     if opened:
         remember_opened(opened, labels)
-        print(f"\n{len(opened)}개 세션을 {'Orca 새 탭' if in_orca else '터미널 새 창'}으로 열었습니다.", flush=True)
+        sent = [s["id"] for s in opened if s["id"] in cont]
+        spend_need(sent)
+        print(f"\n{len(opened)}개 세션을 {'Orca 새 탭' if in_orca else '터미널 새 창'}으로 열었습니다." + continued(sent), flush=True)
         if confirm:
             confirm_opened(opened, labels, since)
     return len(opened)
@@ -883,9 +1052,12 @@ def main():
     args = sys.argv[1:]
     if "--serve" in args:
         return serve("--no-browser" not in args)
-    for flag in ("--done", "--undone", "--keep", "--unkeep"):
+    for flag in ("--done", "--undone", "--keep", "--unkeep", "--need", "--unneed", "--tomorrow", "--untomorrow"):
         if flag in args:
-            return mark_done(args[args.index(flag) + 1:], undo=flag.startswith("--un"), kind="keep" if "keep" in flag else "done")
+            return mark_done(args[args.index(flag) + 1:], undo=flag.startswith("--un"),
+                             kind=next((k for k in ("keep", "need", "tomorrow") if k in flag), "done"))
+    if "--open-tomorrow" in args:
+        return open_tomorrow()
     if "--open-id" in args:
         return open_id(next(iter(args[args.index("--open-id") + 1:]), ""))
     if "--open-desk" in args:
@@ -899,16 +1071,17 @@ def main():
     live, labels = live_ids(), session_labels()
     if "--from" in args:  # 저장해 둔 스냅샷 그대로 열기
         snap = json.load(open(args[args.index("--from") + 1], encoding="utf-8"))
-        open_tabs([dict(x, title=x["name"], first="") for x in snap], live, labels, confirm=True)
+        open_tabs([saved_row(x) for x in snap], live, labels, confirm=True)
         return
-    end = anchor(live)
+    end, need = anchor(live), load_done("need")
     while True:
         print(f"세션 기록 읽는 중... ({hours:g}시간 범위)", flush=True)
         rows = collect(end - hours * 3600)
         print(f"\n기준: 마지막으로 끊긴 시각 {time.strftime('%m-%d %H:%M', time.localtime(end))}에서 {hours:g}시간 전까지 - {len(rows)}개\n")
         for i, s in enumerate(rows, 1):
             when = time.strftime("%m-%d %H:%M", time.localtime(s["mtime"]))
-            mark = ("  <- 실행 중" if s["id"] in live else "") + ("  [킵]" if s.get("kept") else "")
+            mark = ("  <- 실행 중" if s["id"] in live else "") + ("  [킵]" if s.get("kept") else "") \
+                + ("  [이어서]" if needs_continue(s, need) else "")
             if ask:
                 print(f"[{i:>2}] {when} {s['tool']:<6} {name_of(s, labels)[:18]} - {one_line(s['last_user'], 34)}{mark}")
                 continue
@@ -917,7 +1090,8 @@ def main():
             print(f"    처음: {one_line(s['first'], 90)}")
             print(f"    마지막 질문: {one_line(s['last_user'], 90)}")
             print(f"    마지막 답: {one_line(s['last_ai'], 120)}")
-            print(f"    다시 열기: cd \"{s['cwd']}\"; {s['cmd']}")
+            run = f"cmd /d /k \"{s['cmd']}\"" if WINDOWS and s["tool"] == "codex" else s["cmd"]  # set …&&는 cmd 문법: PowerShell에 붙여도 되게 탭처럼 cmd로 연다
+            print(f"    다시 열기: cd \"{s['cwd']}\"; {run}")
         if not ask:
             break
         try:

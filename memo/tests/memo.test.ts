@@ -320,6 +320,30 @@ test('세션 칸 [열기]는 꺼진 줄에만 있고(킵이어도) recent_sessio
   expect(ran.filter(a => a.includes('--open-id')).length).toBe(1)
 })
 
+test('세션 칸 [내일]은 체크(--tomorrow)하고, [내일 열 것 N개 열기]가 --open-tomorrow로 한 번에 연 뒤 체크를 지운다', async ($, on) => {
+  disk(on)
+  const A = '1111aaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const rows = [{ id: A, tool: 'claude', name: 'DHCP', live: true, state: '', last: '10-23 09:00' }]
+  const ran: string[][] = []
+  on('process.run', ($, e) => {
+    ran.push([...e.argv])
+    if (e.argv.includes('--tomorrow')) return { value: { exitCode: 0, stdout: '내일 열기로 표시: DHCP (1111aaaa)', stderr: '' } }
+    if (e.argv.includes('--open-tomorrow')) return { value: { exitCode: 0, stdout: '1개 탭을 새 Windows Terminal 창으로 열었습니다.', stderr: '' } }
+    return { value: { exitCode: 0, stdout: JSON.stringify(rows), stderr: '' } }
+  })
+
+  const ui = await $.ui.mount({ plugin: 'memo', surface: 'terminal', ...BAND })
+  await ui.press({ key: 'tab-desk' })
+  expect(await ui.find({ key: 'desk-tomorrow' })).toBeUndefined()
+  await ui.press({ key: `tomorrow-${A}` })
+  expect(ran.at(-1)!.slice(-2)).toEqual(['--tomorrow', A])
+  expect(await label(ui, `tomorrow-${A}`)).toContain('내일✓')
+  expect(await label(ui, 'desk-tomorrow')).toContain('내일 열 것 1개 열기')
+  await ui.press({ key: 'desk-tomorrow' })
+  expect(ran.at(-1)!.at(-1)).toBe('--open-tomorrow')
+  expect(await ui.find({ key: 'desk-tomorrow' })).toBeUndefined()
+})
+
 test('세션 칸 [더 보기]는 desk_json.py를 72시간으로 다시 읽고, [하루만]으로 되돌린다', async ($, on) => {
   disk(on)
   const ran: string[][] = []

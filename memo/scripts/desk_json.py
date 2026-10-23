@@ -60,7 +60,7 @@ def main(hours=24.0):
     live, labels, rows = data["live"], data["labels"], data["rows"]
     wins = window_of_tabs()
     print(json.dumps([
-        dict(id=s["id"], tool=s["tool"], name=rs.name_of(s, labels), live=s["id"] in live, state=s["state"], kept=s["kept"],
+        dict(id=s["id"], tool=s["tool"], name=rs.name_of(s, labels), live=s["id"] in live, state=s["state"], kept=s["kept"], tomorrow=s.get("tomorrow", False),
              win=wins.get(tab_key(rs.name_of(s, labels))) if s["id"] in live else None,
              last=time.strftime("%m-%d %H:%M", time.localtime(s.get("mtime", s.get("opened", data["end"])))),
              cwd=s["cwd"], **rs.desk_details(s, labels))
